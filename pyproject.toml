@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dazzle-claude-config"
 dynamic = ["version"]
-description = "A new project created from git-repokit-template"
+description = "Sync Claude Code configuration across machines (ccs): collect, apply, and bootstrap from a GitHub payload repo"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
 requires-python = ">=3.10"
 authors = [
     {name = "djdarcy", email = "djdarcy@users.noreply.github.com"},
 ]
-keywords = []
+keywords = ["claude-code", "config", "sync", "dotfiles", "cli", "bootstrap"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Environment :: Console",
@@ -41,6 +41,7 @@ Repository = "https://github.com/DazzleML/dazzle-claude-config"
 Issues = "https://github.com/DazzleML/dazzle-claude-config/issues"
 
 [project.scripts]
+ccs = "dazzle_claude_config.cli:main"
 dazzle-claude-config = "dazzle_claude_config.cli:main"
 
 [tool.setuptools.dynamic]
