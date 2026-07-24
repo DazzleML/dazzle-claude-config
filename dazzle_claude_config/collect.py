@@ -25,6 +25,8 @@ class CollectResult:
     excluded: list[str] = field(default_factory=list)
     missing_live: list[str] = field(default_factory=list)  # in repo, gone locally (report only)
     git_ignored: list[str] = field(default_factory=list)   # A8 violations
+    failed: list[tuple[str, str]] = field(default_factory=list)  # (path, reason)
+    mismatched: list[str] = field(default_factory=list)    # type-conflict entries
 
     @property
     def refusals(self) -> int:
@@ -37,6 +39,9 @@ def collect(manifest: Manifest, checkout: Path, roots: dict[str, Path],
     copied_repo_rels: list[str] = []
 
     for d in diff_all(manifest, checkout, roots):
+        if d.mismatch:
+            result.mismatched.append(f"{d.entry.repo}: {d.mismatch}")
+            continue
         result.excluded.extend(f"{d.entry.repo}/{r}" for r in d.excluded)
         result.missing_live.extend(f"{d.entry.repo}/{r}" if r else d.entry.repo
                                    for r in d.repo_only)
@@ -54,9 +59,13 @@ def collect(manifest: Manifest, checkout: Path, roots: dict[str, Path],
                 continue
 
             if not dry_run:
-                dest = d.repo_base / rel if rel else d.repo_base
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dest)
+                try:
+                    dest = d.repo_base / rel if rel else d.repo_base
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dest)
+                except OSError as e:
+                    result.failed.append((display, str(e)))
+                    continue
             result.copied.append(display)
             repo_rel = f"{d.entry.repo}/{rel}" if rel else d.entry.repo
             copied_repo_rels.append(repo_rel)

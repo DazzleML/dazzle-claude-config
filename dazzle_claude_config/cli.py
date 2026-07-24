@@ -84,7 +84,11 @@ def main(argv: list[str] | None = None) -> int:
             for rel in r.git_ignored:
                 print(f"ERROR: copied but IGNORED by git (A8 -- check "
                       f".git/info/exclude and .gitignore): {rel}")
-            if r.git_ignored:
+            for path, reason in r.failed:
+                print(f"FAILED ({reason}): {path}")
+            for m in r.mismatched:
+                print(f"ERROR: {m} -- entry skipped, fix the live tree")
+            if r.git_ignored or r.failed or r.mismatched:
                 return EXIT_ERROR
             if not r.copied and not r.refusals:
                 print("collect: nothing to do")
@@ -106,10 +110,18 @@ def main(argv: list[str] | None = None) -> int:
                       f"--sync-removals or collect it): {rel}")
             for e in r.deferred:
                 print(f"skipped (strategy lands in Phase 2): {e}")
+            for path, reason in r.failed:
+                print(f"FAILED ({reason}): {path}")
+            for m in r.mismatched:
+                print(f"ERROR: {m} -- entry skipped, fix the live tree")
             if r.backup_dir:
                 print(f"backups: {r.backup_dir}")
+            if args.only and r.only_matched == 0:
+                print(f"warning: --only {args.only!r} matched no manifest entries")
             if not (r.copied or r.seeded or r.removals_staged):
                 print("apply: nothing to do")
+            if r.failed or r.mismatched:
+                return EXIT_ERROR
             return EXIT_DRIFT if r.removals_pending else EXIT_CLEAN
 
         # status / diff
@@ -120,6 +132,9 @@ def main(argv: list[str] | None = None) -> int:
                 if repo.has_conflicts():
                     print("MERGE CONFLICTS in checkout -- resolve before apply")
             for d in diffs:
+                if d.mismatch:
+                    print(f"{d.entry.repo}: {d.mismatch}")
+                    continue
                 print(f"{d.entry.repo}: {len(d.live_only)} live-only, "
                       f"{len(d.repo_only)} repo-only, {len(d.modified)} modified")
             print("status: clean" if not diffs else
@@ -127,6 +142,9 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_CLEAN if not diffs else EXIT_DRIFT
         else:
             for d in diffs:
+                if d.mismatch:
+                    print(f"mismatch:   {d.entry.repo} ({d.mismatch})")
+                    continue
                 for rel in d.live_only:
                     print(f"live-only:  {d.entry.repo}/{rel}" if rel
                           else f"live-only:  {d.entry.repo}")

@@ -38,10 +38,12 @@ class EntryDiff:
     repo_only: list[str] = field(default_factory=list)   # apply-pending adds / removals
     modified: list[str] = field(default_factory=list)
     excluded: list[str] = field(default_factory=list)
+    mismatch: str | None = None  # file-vs-directory type conflict; entry skipped
 
     @property
     def clean(self) -> bool:
-        return not (self.live_only or self.repo_only or self.modified)
+        return not (self.live_only or self.repo_only or self.modified
+                    or self.mismatch)
 
 
 def entry_applies(entry: Entry) -> bool:
@@ -61,6 +63,16 @@ def diff_entry(entry: Entry, checkout: Path, roots: dict[str, Path],
                manifest: Manifest) -> EntryDiff:
     live_base, repo_base = entry_bases(entry, checkout, roots, manifest.territories)
     d = EntryDiff(entry=entry, live_base=live_base, repo_base=repo_base)
+
+    # A file where a directory should be (or vice versa) is an environment
+    # anomaly -- processing it would nest a file inside the same-named
+    # checkout dir. Flag and skip the entry instead.
+    if live_base.exists() and repo_base.exists() and \
+            live_base.is_dir() != repo_base.is_dir():
+        live_kind = "dir" if live_base.is_dir() else "file"
+        repo_kind = "dir" if repo_base.is_dir() else "file"
+        d.mismatch = f"type mismatch: live is a {live_kind}, repo is a {repo_kind}"
+        return d
 
     # Single-file entry
     if repo_base.is_file() or (not repo_base.exists() and live_base.is_file()):

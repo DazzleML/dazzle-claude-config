@@ -1,5 +1,9 @@
 """CLI: A7 exit-code contract (0 clean / 1 drift / 2 error) via main(argv)."""
+import json
+
 from dazzle_claude_config.cli import main
+
+from conftest import git
 
 
 def _argv(env, verb, *extra):
@@ -51,3 +55,29 @@ def test_apply_flow_and_diff(env, capsys):
     assert main(_argv(env, "apply")) == 0
     assert (claude / "agents" / "fleet.md").exists()
     assert main(_argv(env, "status")) == 0
+
+
+def test_setup_gitopssafetyerror_from_checkoutrepo_exit2(tmp_path, monkeypatch, capsys):
+    """_setup() only wraps CheckoutRepo() in `except GitError` (falling back
+    to repo=None for plain-directory checkouts); GitopsSafetyError (the
+    home-repo guard) is a SIBLING exception class, not a GitError subclass,
+    so it is NOT caught there. Confirm it still propagates up to main()'s
+    outer `except (ManifestError, GitError, GitopsSafetyError)` and exits
+    cleanly (2, with a message) instead of crashing with a traceback. This
+    exact path (inline construction inside _setup(), not a pre-built repo
+    object passed into apply()) had no prior test coverage."""
+    fake_home = tmp_path / "fake_home"
+    (fake_home / ".claude").mkdir(parents=True)
+    git(fake_home, "init", "-q", "-b", "main")
+    (fake_home / "ccs-manifest.json").write_text(
+        json.dumps({"manifest_version": 1, "territories": {}, "entries": []}),
+        encoding="utf-8")
+    git(fake_home, "add", "-A")
+    git(fake_home, "commit", "-q", "-m", "seed")
+    monkeypatch.setattr("dazzle_claude_config.gitops.Path.home",
+                        staticmethod(lambda: fake_home))
+    rc = main(["--checkout-dir", str(fake_home), "--claude-dir",
+               str(fake_home / ".claude"), "--user-claude", str(tmp_path / "user"),
+               "status"])
+    assert rc == 2
+    assert "home" in capsys.readouterr().err.lower()
