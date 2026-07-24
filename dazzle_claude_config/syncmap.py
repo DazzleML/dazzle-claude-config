@@ -88,6 +88,14 @@ def diff_entry(entry: Entry, checkout: Path, roots: dict[str, Path],
         elif files_differ(live_base / rel, repo_base / rel):
             d.modified.append(rel)
     for rel in sorted(repo_files - live_files):
+        # Exclusion is symmetric: an excluded path is invisible to sync on
+        # BOTH sides (e.g. __pycache__ generated in the checkout by git
+        # hooks must not read as apply-pending drift).
+        full_rel = f"{entry.target}/{rel}" if rel else entry.target
+        if is_excluded(full_rel, manifest.collect_exclude) or \
+                is_excluded(rel, manifest.collect_exclude):
+            d.excluded.append(rel)
+            continue
         d.repo_only.append(rel)
     return d
 

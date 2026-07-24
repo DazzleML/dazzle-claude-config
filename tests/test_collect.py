@@ -61,6 +61,17 @@ def test_collect_exclude_honored(env):
     assert not (checkout / "dotclaude" / "agents" / "__pycache__").exists()
 
 
+def test_exclusion_is_symmetric_repo_side(env):
+    """Excluded files IN THE CHECKOUT (e.g. hook-generated __pycache__) are
+    invisible to sync -- not phantom apply-pending drift."""
+    from dazzle_claude_config.syncmap import diff_all
+    _, _, checkout, manifest, roots = env
+    pyc = checkout / "dotclaude" / "agents" / "__pycache__"
+    pyc.mkdir()
+    (pyc / "junk.cpython-312.pyc").write_bytes(b"\x00")
+    assert all(d.clean for d in diff_all(manifest, checkout, roots))
+
+
 def test_missing_live_reported_not_deleted(env):
     claude, _, checkout, manifest, roots = env
     (claude / "agents" / "oracle.md").unlink()
