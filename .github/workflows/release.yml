@@ -1,0 +1,63 @@
+name: Publish to PyPI
+
+# Triggered when a GitHub Release is PUBLISHED -- not on tag push. This makes
+# "publish a release" the single deliberate ship action: force-moving or
+# re-pushing a tag (e.g. amending a released commit) never re-fires PyPI, so
+# we don't get spurious "400 File already exists" failures. The release event
+# checks out the release's tag, so the right version is built.
+on:
+  release:
+    types: [published]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    # Skip on the template repo itself (no pyproject.toml until instantiated)
+    if: github.repository != 'DazzleTools/git-repokit-template'
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build
+
+    - name: Build package
+      run: python -m build
+
+    - name: Check package
+      run: |
+        pip install twine
+        twine check dist/*
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: dist
+        path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+
+    permissions:
+      id-token: write
+
+    steps:
+    - uses: actions/download-artifact@v8
+      with:
+        name: dist
+        path: dist/
+
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
