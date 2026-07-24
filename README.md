@@ -1,6 +1,11 @@
 # dazzle-claude-config
 
+[![PyPI](https://img.shields.io/pypi/v/dazzle-claude-config?color=green)](https://pypi.org/project/dazzle-claude-config/)
+[![Release Date](https://img.shields.io/github/release-date/DazzleML/dazzle-claude-config?color=green)](https://github.com/DazzleML/dazzle-claude-config/releases)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: GPL v3](https://img.shields.io/badge/license-GPL%20v3-green.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
 [![Installs](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/djdarcy/5329fbe75d9bbd8597cdc45863a22878/raw/installs.json)](https://dazzleml.github.io/dazzle-claude-config/stats/#installs)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20BSD-lightgrey.svg)](https://github.com/DazzleML/dazzle-claude-config)
 
 **ccs** -- sync Claude Code configuration across machines.
 
