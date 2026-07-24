@@ -1,5 +1,7 @@
 # dazzle-claude-config
 
+[![Installs](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/djdarcy/5329fbe75d9bbd8597cdc45863a22878/raw/installs.json)](https://dazzleml.github.io/dazzle-claude-config/stats/#installs)
+
 **ccs** -- sync Claude Code configuration across machines.
 
 Your global `CLAUDE.md`, agents, skills, commands, hooks, and settings live in a git "payload" repo (yours is private; GitHub is the distribution area). `ccs` moves config between that repo's checkout and your live `~/.claude` + `~/claude` directories -- guarded, backed up, and never touching your home directory's own git repository.
