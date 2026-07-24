@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "$PROJECT_NAME"
+name = "dazzle-claude-config"
 dynamic = ["version"]
-description = "$DESCRIPTION"
+description = "A new project created from git-repokit-template"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
 requires-python = ">=3.10"
 authors = [
-    {name = "$GITHUB_USER", email = "$AUTHOR_EMAIL"},
+    {name = "djdarcy", email = "djdarcy@users.noreply.github.com"},
 ]
 keywords = []
 classifiers = [
@@ -36,19 +36,19 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/$GITHUB_ORG/$PROJECT_NAME"
-Repository = "https://github.com/$GITHUB_ORG/$PROJECT_NAME"
-Issues = "https://github.com/$GITHUB_ORG/$PROJECT_NAME/issues"
+Homepage = "https://github.com/DazzleML/dazzle-claude-config"
+Repository = "https://github.com/DazzleML/dazzle-claude-config"
+Issues = "https://github.com/DazzleML/dazzle-claude-config/issues"
 
 [project.scripts]
-$CLI_COMMAND = "$PACKAGE_NAME.cli:main"
+dazzle-claude-config = "dazzle_claude_config.cli:main"
 
 [tool.setuptools.dynamic]
-version = {attr = "$PACKAGE_NAME._version.PIP_VERSION"}
+version = {attr = "dazzle_claude_config._version.PIP_VERSION"}
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["$PACKAGE_NAME", "$PACKAGE_NAME.*"]
+include = ["dazzle_claude_config", "dazzle_claude_config.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -57,8 +57,8 @@ python_functions = "test_*"
 python_classes = "Test*"
 
 [tool.repokit-common]
-version-source = "$PACKAGE_NAME/_version.py"
+version-source = "dazzle_claude_config/_version.py"
 changelog = "CHANGELOG.md"
-repo-url = "https://github.com/$GITHUB_ORG/$PROJECT_NAME"
+repo-url = "https://github.com/DazzleML/dazzle-claude-config"
 tag-prefix = "v"
 private-patterns = ["private/", "local/", ".env"]

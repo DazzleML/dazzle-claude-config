@@ -1,6 +1,6 @@
-# Contributing to $PROJECT_NAME
+# Contributing to dazzle-claude-config
 
-Thank you for considering contributing to $PROJECT_NAME!
+Thank you for considering contributing to dazzle-claude-config!
 
 ## Development Setup
 
@@ -12,8 +12,8 @@ Thank you for considering contributing to $PROJECT_NAME!
 ### Clone and Install
 
 ```bash
-git clone https://github.com/$GITHUB_ORG/$PROJECT_NAME.git
-cd $PROJECT_NAME
+git clone https://github.com/DazzleML/dazzle-claude-config.git
+cd dazzle-claude-config
 python -m venv .venv
 source .venv/bin/activate        # Linux/Mac
 # or: .venv\Scripts\activate     # Windows
@@ -29,9 +29,9 @@ python -m pytest tests/ -v
 ## Project Structure
 
 ```
-$PACKAGE_NAME/
+dazzle_claude_config/
   __init__.py         # Package initialization
-  __main__.py         # CLI entry (python -m $PACKAGE_NAME)
+  __main__.py         # CLI entry (python -m dazzle_claude_config)
   _version.py         # Version (PEP 440)
 tests/
   conftest.py         # Shared fixtures

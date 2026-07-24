@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea for $PROJECT_NAME
+about: Suggest an idea for dazzle-claude-config
 title: "[FEATURE] "
 labels: enhancement
 assignees: ''
