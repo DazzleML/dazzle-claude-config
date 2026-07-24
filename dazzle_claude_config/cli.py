@@ -56,7 +56,15 @@ def _setup(args) -> tuple[Manifest, Path, dict, CheckoutRepo | None]:
         raise ManifestError(
             f"checkout not found: {checkout} (clone the payload repo first, "
             "or pass --checkout-dir)")
-    manifest = Manifest.load(checkout)
+    try:
+        manifest = Manifest.load(checkout)
+    except ManifestError as e:
+        if "manifest not found" not in str(e):
+            raise
+        # Layout-agnostic fallback: a bare mirror of a ~/.claude dir.
+        manifest = Manifest.implicit(checkout)
+        print(f"note: no ccs-manifest.json -- using implicit ~/.claude layout "
+              f"({len(manifest.entries)} standard surfaces detected)")
     roots = territory_roots(args.claude_dir, args.user_claude)
     try:
         repo = CheckoutRepo(checkout)

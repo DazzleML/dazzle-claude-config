@@ -17,6 +17,13 @@ VALID_STRATEGIES = {"copy", "render", "seed-if-absent", "plugins"}
 # Strategies the Phase 1 MVP executes; others are reported and skipped.
 MVP_STRATEGIES = {"copy", "seed-if-absent"}
 
+# Standard ~/.claude surfaces recognized when a repo has no manifest (a bare
+# mirror of someone's config dir). settings.local.json and credentials remain
+# hard-denied regardless.
+IMPLICIT_DIRS = ["agents", "skills", "commands", "hooks", "scripts", "output-styles"]
+IMPLICIT_FILES = ["CLAUDE.md", "settings.json", "keybindings.json"]
+_IMPLICIT_MARKERS = {"CLAUDE.md", "skills", "commands", "agents", "settings.json"}
+
 _TOP_KEYS = {"manifest_version", "description", "territories", "entries",
              "collect_exclude", "deny"}
 _ENTRY_KEYS = {"repo", "territory", "target", "strategy", "overlays", "vars", "os"}
@@ -46,6 +53,34 @@ class Manifest:
     collect_exclude: list[str]
     deny: list[str]
     path: Path
+
+    @classmethod
+    def implicit(cls, checkout: Path) -> "Manifest":
+        """Synthesize a manifest for a manifest-less checkout that is a bare
+        mirror of a ~/.claude directory (the layout-agnostic case: any repo
+        someone made by pushing their config dir as-is)."""
+        present = {p.name for p in checkout.iterdir()} if checkout.is_dir() else set()
+        if not (present & _IMPLICIT_MARKERS):
+            raise ManifestError(
+                f"no {MANIFEST_NAME} and {checkout} does not look like a "
+                "Claude config dir (none of: " + ", ".join(sorted(_IMPLICIT_MARKERS)) + ")")
+        entries = []
+        for d in IMPLICIT_DIRS:
+            if (checkout / d).is_dir():
+                entries.append(Entry(repo=d, strategy="copy",
+                                     territory="dotclaude", target=d))
+        for f in IMPLICIT_FILES:
+            if (checkout / f).is_file():
+                entries.append(Entry(repo=f, strategy="copy",
+                                     territory="dotclaude", target=f))
+        return cls(
+            version=SUPPORTED_VERSION,
+            territories={"dotclaude": {"root_var": "CLAUDE_DIR", "repo_dir": "."}},
+            entries=entries,
+            collect_exclude=["**/__pycache__/**", "**/*.pyc"],
+            deny=[],
+            path=checkout / MANIFEST_NAME,
+        )
 
     @classmethod
     def load(cls, checkout: Path) -> "Manifest":

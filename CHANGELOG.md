@@ -4,6 +4,11 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-24
+
+### Added
+- **Layout-agnostic payloads**: a repo with no `ccs-manifest.json` that looks like a bare `~/.claude` mirror (root-level `CLAUDE.md`/`skills/`/`commands/`/`agents/`...) now works via an implicit manifest synthesized from the standard surfaces present -- anyone who pushed their config dir to GitHub as-is can point ccs at it. Non-config repos still fail with a clear error; the hard deny-list and secret scanning apply unchanged. (+5 tests, 58 total)
+
 ## [0.1.0] - 2026-07-24
 
 ### Added
@@ -16,5 +21,6 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/DazzleML/dazzle-claude-config/releases/tag/v0.1.0
