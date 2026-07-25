@@ -5,9 +5,22 @@ name: Publish to PyPI
 # re-pushing a tag (e.g. amending a released commit) never re-fires PyPI, so
 # we don't get spurious "400 File already exists" failures. The release event
 # checks out the release's tag, so the right version is built.
+#
+# workflow_dispatch is the manual escape hatch: publish without (or after) a
+# GitHub Release -- e.g. the release event failed, the runner died mid-publish,
+# or a release was created before the workflow existed. Pass the tag to build;
+# leaving `ref` empty builds the branch you dispatch from. PyPI still refuses a
+# version it already has, so a manual re-run of an already-published version
+# fails loudly rather than silently doing nothing -- bump the version first.
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag or ref to build and publish (e.g. v0.2.1). Empty = this branch.'
+        required: false
+        default: ''
 
 permissions:
   id-token: write
@@ -21,6 +34,16 @@ jobs:
 
     steps:
     - uses: actions/checkout@v6
+      with:
+        # release event: the release's tag. Manual dispatch: the ref typed in,
+        # or the dispatched branch when left empty.
+        ref: ${{ github.event.inputs.ref || github.ref }}
+
+    - name: Report what is being built
+      run: |
+        echo "Trigger: ${{ github.event_name }}"
+        echo "Ref:     ${{ github.event.inputs.ref || github.ref }}"
+        git log --oneline -1
 
     - name: Set up Python
       uses: actions/setup-python@v6
