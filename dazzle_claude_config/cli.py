@@ -38,10 +38,23 @@ def _add_common(parser, suppress=False):
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    # Every verb assumes a checkout already exists, so --help must answer
+    # "where do I get one?" -- otherwise the cold start is a dead end.
     p = argparse.ArgumentParser(
         prog="ccs",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         description="Sync Claude Code configuration across machines "
-                    "(dazzle-claude-config).")
+                    "(dazzle-claude-config).",
+        epilog="""getting started (a payload is an ordinary git repo -- clone it yourself):
+  git clone <payload-repo> ~/claude/my-config
+  ccs status --checkout-dir ~/claude/my-config   # look before you leap
+  ccs apply  --checkout-dir ~/claude/my-config   # install it; originals backed up
+
+  Clone into ~/claude (or anywhere), NOT into ~/.claude -- the checkout is
+  not your live config. Set CCS_CHECKOUT_DIR to stop passing --checkout-dir.
+
+  A public collection to try: https://github.com/DazzleML/dazzle-claude-code-config
+""")
     p.add_argument("--version", action="version",
                    version=f"ccs {_version.DISPLAY_VERSION}")
     _add_common(p)

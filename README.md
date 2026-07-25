@@ -7,32 +7,65 @@
 [![Installs](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/djdarcy/5329fbe75d9bbd8597cdc45863a22878/raw/installs.json)](https://dazzleml.github.io/dazzle-claude-config/stats/#installs)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20BSD-lightgrey.svg)](docs/platforms.md)
 
-**ccs** -- sync Claude Code configuration across machines.
+**Git-backed sync for your Claude Code configuration (skills, commands, agents, hooks, and `CLAUDE.md`) across every machine you work on, with credential guards on the way in and backups on every write.**
 
-> **ccs is alpha.** It works for real daily use (it manages its maintainers' own configs), but surfaces may change between versions while the Phase 2 feature set (settings rendering, plugin installs, guided bootstrap) lands. As with any sync tool, keep independent backups of anything irreplaceable.
+## The Problem
 
-Your global `CLAUDE.md`, agents, skills, commands, hooks, and settings live in a git "payload" repo (yours is private; GitHub is the distribution area). `ccs` moves config between that repo's checkout and your live `~/.claude` + `~/claude` directories -- guarded, backed up, and never touching your home directory's own git repository.
+Your Claude Code setup is earned. Skills you refined over months, commands that encode how you actually work, a `CLAUDE.md` tuned by a hundred small corrections. All of it lives in `~/.claude` on **one** machine.
+
+Then you get a laptop. Or a work box. Or you reinstall. So you copy the folder by hand -- and now the two drift apart, silently, because there is nothing to tell you which one is newer. Worse, `~/.claude` is not only config: it also holds `.credentials.json`, OAuth state, plugin caches, and session databases. Copy it wholesale into a git repo to "back it up" and you have published an API key. There is no history either, so when a config change makes Claude behave oddly, there is nothing to diff and nothing to roll back to.
+
+**ccs** treats your configuration as a git repository -- a *payload* -- and moves files between that repo's checkout and your live `~/.claude`. `collect` copies a live config in, refusing credentials rather than trusting you to notice them. `apply` copies config back out, backing up every file it overwrites. Git does what git is good at: history, review, and resolving the conflict when two machines change the same skill. Because a payload is just a repo, it can be yours, someone else's, or a fork of theirs.
+
+> [!NOTE]
+> **Alpha software (v0.2.1) -- working, in daily use, surfaces not frozen.** It manages my own configs across machines. The core loop (`collect` / `apply` / `status` / `diff`, deny-list + credential scanning, backups, staged removals) are functional; the Phase 2 set (templated settings rendering, declarative plugin installs, and one-command `ccs bootstrap` onboarding) is still a WIP, and command surfaces may change between versions until it does. Please [file issues](https://github.com/DazzleML/dazzle-claude-config/issues) for anything rough. And, as with any sync tool, keep an independent copy of anything irreplaceable.
 
 Part of the DazzleML Claude toolchain: [session-logger](https://github.com/DazzleML/claude-session-logger) records, [claude-session-backup](https://github.com/DazzleML/Claude-Session-Backup) preserves, **ccs distributes**.
 
-## Install
+## Quick Start
 
 ```bash
-pip install dazzle-claude-config
+pip install dazzle-claude-config          # installs `ccs` (alias: dazzle-claude-config)
 ```
 
-Installs the `ccs` command (alias: `dazzle-claude-config`). Python 3.10+, stdlib only.
+Python 3.10+, stdlib only, git is the sole external dependency.
 
-## Usage
+**Try a config without committing to one.** [dazzle-claude-code-config](https://github.com/DazzleML/dazzle-claude-code-config) is a public collection (skills, commands, and agents for structured design analysis, postmortems, human test checklists, and multi-agent consultation) and it is a working payload repo you can point ccs at right now:
 
 ```bash
-git clone <your-payload-repo> ~/claude/<payload-name>   # once per machine
+git clone https://github.com/DazzleML/dazzle-claude-code-config ~/claude/dazzle-config
 
+ccs status --checkout-dir ~/claude/dazzle-config   # what differs? nothing is touched
+ccs diff   --checkout-dir ~/claude/dazzle-config   # which files, exactly?
+
+ccs apply --only dotclaude/skills --checkout-dir ~/claude/dazzle-config   # a slice...
+ccs apply --checkout-dir ~/claude/dazzle-config                          # ...or the lot
+```
+
+`--only` takes a prefix of the path *inside the repo* (the left-hand paths `ccs diff` prints) which is why it reads `dotclaude/skills` rather than `skills`. A prefix matching nothing warns rather than silently doing nothing.
+
+`apply` merges into your live config rather than replacing it, backs up anything it overwrites, and treats `CLAUDE.md` as seed-if-absent (so your own memory file is never clobbered). Fork it if you want to build on it; it is designed to be forked.
+
+**Already have your own config repo:**
+
+```bash
+git clone <your-payload-repo> ~/claude/my-config
+ccs status --checkout-dir ~/claude/my-config
+ccs apply  --checkout-dir ~/claude/my-config
+```
+
+**Starting from the config you already have on this machine** -- see [Turning your current config into a payload](#turning-your-current-config-into-a-payload) for the four commands that package `~/.claude` into a repo.
+
+Then, day to day:
+
+```bash
 ccs status     # three-way drift report (live vs checkout vs remote); exit 1 = drift
 ccs diff       # per-file details
-ccs collect    # live config INTO the checkout (secrets refused + reported)
+ccs collect    # live config INTO the checkout (credentials refused + reported)
 ccs apply      # checkout config INTO the live tree (originals backed up first)
 ```
+
+## Usage
 
 `ccs status` answers "am I in sync?" across all three legs -- your live config vs the checkout, the checkout vs its remote, and any uncommitted work in the checkout:
 
@@ -63,7 +96,7 @@ ccs moves files between exactly three locations. The distinction that matters: *
 | **User territory** | `~/claude` | you -- notes, backups, and where checkouts land | `--user-claude` |
 | **Payload checkout** | `~/claude/dazzle-claude-code-config` | ccs and git -- **not** Claude Code | `CCS_CHECKOUT_DIR` env, or `--checkout-dir` |
 
-The **payload checkout** is an ordinary `git clone` of a *config payload repo*: a repository whose contents are skills, commands, agents, hooks, and a `CLAUDE.md`. Editing files there changes nothing until you run `ccs apply`. That indirection is the whole point -- it gives your config a place to be versioned, reviewed, conflict-resolved, and shared, without a half-finished edit reaching a live session.
+The **payload checkout** is an ordinary `git clone` of a *config payload repo*: a repository whose contents are skills, commands, agents, hooks, and a `CLAUDE.md`. Editing files there changes nothing until you run `ccs apply`. That indirection is the whole point. It gives your config a place to be versioned, reviewed, conflict-resolved, and shared, without a half-finished edit reaching a live session.
 
 ```mermaid
 flowchart LR
@@ -85,7 +118,7 @@ flowchart LR
     C2 -- "ccs apply" --> L2
 ```
 
-ccs owns the vertical hops (live <-> checkout, guarded and backed up). Git owns the horizontal ones (checkout <-> GitHub <-> your other machines). No merge logic lives in ccs -- a conflict between two machines is an ordinary git conflict you resolve in the checkout with your normal tools.
+ccs owns the vertical hops (live ↔ checkout, guarded and backed up). Git owns the horizontal ones (checkout ↔ GitHub ↔ your other machines). No merge logic lives in ccs -- a conflict between two machines is an ordinary git conflict you resolve in the checkout with your normal tools.
 
 ### Turning your current config into a payload
 
@@ -112,10 +145,10 @@ Run `ccs collect` from then on whenever you change your live config, and commit.
 Any repo that holds config. That is the interesting part:
 
 - **Your own** (the main use case) -- a private repo you push from one machine and pull on the next. Your config follows you.
-- **Someone else's, read-only** -- point a checkout at a public collection such as [dazzle-claude-code-config](https://github.com/DazzleML/dazzle-claude-code-config) and `ccs apply` to try their skills. `--only <prefix>` takes a slice instead of everything.
+- **Someone else's, read-only** -- point a checkout at a public collection such as [dazzle-claude-code-config](https://github.com/DazzleML/dazzle-claude-code-config) and `ccs apply` to try the "Dazzle" skills collection. `--only <prefix>` takes a slice instead of everything.
 - **A fork of someone else's** -- start from a collection you like, then `ccs collect` your own changes on top and push to your fork. Theirs becomes yours, and you can still pull their updates.
 
-Nothing stops you keeping several checkouts side by side and pointing ccs at whichever you want -- they are just directories:
+Nothing stops you keeping several checkouts side by side and pointing ccs at whichever you want, as they are just directories:
 
 ```bash
 ccs diff  --checkout-dir ~/claude/someones-collection                  # what would change?

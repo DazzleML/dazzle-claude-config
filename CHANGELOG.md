@@ -4,7 +4,7 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
-## [0.2.1] - 2026-07-24
+## [0.2.1] - 2026-07-25
 
 ### Added
 - Common options accepted BOTH before and after the verb (human-test finding: everyone types `ccs status --checkout-dir X`)
