@@ -1,4 +1,6 @@
 """apply: A3 (no destruction without backup), A11 (conflict guard), A2 (idempotency)."""
+import subprocess
+
 import pytest
 
 from dazzle_claude_config.apply import ApplyConflictError, apply
@@ -6,7 +8,7 @@ from dazzle_claude_config.collect import collect
 from dazzle_claude_config.gitops import CheckoutRepo
 from dazzle_claude_config.syncmap import diff_all
 
-from conftest import git
+from conftest import GIT_ID, git
 
 
 def test_clean_env_applies_nothing(env, backup_dir):
@@ -79,9 +81,17 @@ def test_a11_conflicted_checkout_refused(env, backup_dir, monkeypatch):
     git(checkout, "checkout", "-q", "main")
     (checkout / "dotclaude" / "CLAUDE.md").write_text("main\n", encoding="utf-8")
     git(checkout, "commit", "-qam", "main edit")
-    result = __import__("subprocess").run(
-        ["git", "merge", "side"], cwd=str(checkout), capture_output=True, text=True)
-    assert result.returncode != 0  # conflict expected
+    # Must carry the same identity conftest's git() helper injects: a bare
+    # `git merge` aborts with "Committer identity unknown" (rc 128) on any
+    # machine without a global git identity -- every CI runner. That satisfies
+    # "returncode != 0" while creating no conflict at all, so the old
+    # assertion passed for the wrong reason and the NEXT line failed in CI.
+    result = subprocess.run(["git", *GIT_ID, "merge", "side"], cwd=str(checkout),
+                            capture_output=True, text=True)
+    assert result.returncode != 0, "merge unexpectedly succeeded -- no conflict to test"
+    assert "CONFLICT" in result.stdout + result.stderr, (
+        "merge failed for a non-conflict reason:\n"
+        f"{result.stdout}\n{result.stderr}")
     repo = CheckoutRepo(checkout)
     assert repo.has_conflicts()
     with pytest.raises(ApplyConflictError):
