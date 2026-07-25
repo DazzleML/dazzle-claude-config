@@ -239,3 +239,68 @@ def test_implicit_mode_nested_git_repo_invisible_to_sync(tmp_path):
     assert r.refused_denied == []
     assert (claude / "skills" / "cloned" / "SKILL.md").exists()
     assert not (claude / "skills" / "cloned" / ".git").exists()
+
+
+def test_cli_nested_plain_dir_refused_a4_repo_root_guard(tmp_path, monkeypatch, capsys):
+    """FAILING characterization test (not yet fixed): found during
+    post-release PyPI validation of v0.2.1, HV.5 of the v0.1.0 checklist.
+
+    gitops.py's CheckoutRepo -- and its own unit test,
+    test_gitops.py::test_a4_nested_plain_dir_in_other_repo_refused, whose
+    docstring reads "Guard (c) from the design contract: a plain (non-git)
+    directory nested inside SOME OTHER (non-home) git repo must be refused
+    -- toplevel != path -- so ccs never silently binds operations to the
+    wrong repository root" -- both establish that this scenario must raise.
+    It does -- but as GitopsSafetyError now, not GitError.
+
+    But cli.py's _setup() (lines ~97-100) catches exactly that GitError
+    and silently downgrades:
+
+        try:
+            repo = CheckoutRepo(checkout)
+        except GitError:
+            repo = None  # plain directory checkout: allowed, A8/A11 checks skipped
+
+    So at the CLI layer -- the only layer an end user touches -- `ccs
+    status`/`collect`/`apply` happily proceed against a --checkout-dir that
+    is not its own git repository root, with ZERO warning printed that A8
+    (git-ignore silent-drop detection) and A11 (merge-conflict detection)
+    have both been silently disabled. The HV.5 checklist step ("Otherwise
+    create a scratch repo, point --checkout-dir at a plain SUBDIR of it ...
+    Expected: clean one-line error ... exit 2") fails against actual 0.2.1
+    behavior: it returns exit 0, "status: clean", no error, no note.
+
+    This is a genuine two-layer contract mismatch, not merely a stale
+    checklist (contrast with HV.3's R6 rewording, where the *tests* also
+    moved to the new contract) -- the gitops-level test still asserts
+    "must be refused" while the CLI silently un-refuses it.
+    """
+    fake_home = tmp_path / "nonexistent-home"
+    monkeypatch.setattr("dazzle_claude_config.gitops.Path.home",
+                        staticmethod(lambda: fake_home))
+    outer = tmp_path / "outer_repo"
+    outer.mkdir()
+    git(outer, "init", "-q", "-b", "main")
+    (outer / "README.md").write_text("outer\n", encoding="utf-8")
+    git(outer, "add", "-A")
+    git(outer, "commit", "-q", "-m", "seed outer")
+    nested_plain = outer / "some" / "nested" / "plain_dir"
+    nested_plain.mkdir(parents=True)
+    (nested_plain / "CLAUDE.md").write_text("# memory\n", encoding="utf-8")
+
+    claude = tmp_path / "claude"
+    claude.mkdir()
+    user = tmp_path / "user"
+    user.mkdir()
+
+    rc = main(["--checkout-dir", str(nested_plain), "--claude-dir", str(claude),
+               "--user-claude", str(user), "status"])
+    captured = capsys.readouterr()
+
+    # FIXED: gitops now raises GitopsSafetyError (a sibling of GitError that
+    # _setup deliberately does not catch), so the refusal reaches the user.
+    assert rc == 2, (
+        f"expected exit 2 (refused per A4 'Guard (c)' contract), got {rc}. "
+        f"stdout={captured.out!r} stderr={captured.err!r}")
+    assert "not a git repository root" in captured.err
+    assert "status: clean" not in captured.out

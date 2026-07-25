@@ -33,7 +33,13 @@ def test_non_repo_rejected(tmp_path, monkeypatch):
                         staticmethod(lambda: tmp_path / "elsewhere"))
     plain = tmp_path / "plain"
     plain.mkdir()
-    with pytest.raises(GitError, match="not a git repository"):
+    # Either refusal is correct, and WHICH one fires depends on the host:
+    # if tmp_path happens to sit inside some git repo (a tracked home dir,
+    # a checkout under /tmp), `rev-parse` succeeds and the nested-root guard
+    # raises GitopsSafetyError; otherwise `rev-parse` fails and it is a plain
+    # GitError. Both messages start "not a git repository". Pinning one made
+    # this test pass or fail on host layout rather than on behavior.
+    with pytest.raises((GitError, GitopsSafetyError), match="not a git repository"):
         CheckoutRepo(plain)
 
 
@@ -65,5 +71,7 @@ def test_a4_nested_plain_dir_in_other_repo_refused(tmp_path, monkeypatch):
     nested_plain = outer / "some" / "nested" / "plain_dir"
     nested_plain.mkdir(parents=True)
     (nested_plain / "file.txt").write_text("x\n", encoding="utf-8")
-    with pytest.raises(GitError, match="not a git repository root"):
+    # GitopsSafetyError, NOT GitError: the CLI downgrades GitError to a
+    # permissive "plain directory checkout" and would silently skip A8/A11.
+    with pytest.raises(GitopsSafetyError, match="not a git repository root"):
         CheckoutRepo(nested_plain)

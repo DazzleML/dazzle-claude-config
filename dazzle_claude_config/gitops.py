@@ -45,9 +45,17 @@ class CheckoutRepo:
         if toplevel != self.path:
             # A plain dir nested inside SOME repo (e.g. under %TEMP% inside a
             # home repo) must not silently bind to that parent repository.
-            raise GitError(
+            #
+            # SAFETY refusal, not a "no repo here" report -- hence
+            # GitopsSafetyError, which the CLI deliberately does not catch.
+            # As GitError it was downgraded to "plain directory checkout,
+            # A8/A11 skipped", silently disabling the git-index and
+            # merge-conflict guards for exactly the ambiguous case this
+            # check exists to catch (found by the v0.2.1 release checklist run).
+            raise GitopsSafetyError(
                 f"not a git repository root: {self.path} "
-                f"(inside repo {toplevel})")
+                f"(inside repo {toplevel}) -- ccs will not bind to a parent "
+                "repository; move the checkout outside it, or `git init` it")
         self.toplevel = toplevel
 
     @classmethod
