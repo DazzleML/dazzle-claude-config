@@ -180,9 +180,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{c('magenta', 'protected')} {rel} "
                       f"{c('dim', '-- matches a deny rule, stays local')}")
             for hit in r.refused_secrets:
-                print(c("bold_red", "REFUSED") +
-                      f" {hit.rel_path} {c('red', f'-- looks like a credential '
-                                            f'(line {hit.line_no}: {hit.excerpt})')}")
+                # Built on its own line: a replacement field may not span
+                # lines in a non-triple-quoted f-string before 3.12 (PEP 701).
+                detail = f"-- looks like a credential (line {hit.line_no}: {hit.excerpt})"
+                print(f"{c('bold_red', 'REFUSED')} {hit.rel_path} {c('red', detail)}")
             for rel in r.copied:
                 verb = "would copy" if args.dry_run else "copied"
                 print(f"{c('green', verb)}: {rel}")

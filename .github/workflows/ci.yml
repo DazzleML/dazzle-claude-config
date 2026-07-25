@@ -46,7 +46,7 @@ jobs:
     # failure is visible even when only newer interpreters are at hand.
     - name: Verify syntax against the minimum supported Python
       run: |
-        pip install ruff
+        pip install "ruff>=0.16"
         ruff check --target-version py310 --select E9 --isolated dazzle_claude_config/ tests/
 
     - name: Lint with flake8
