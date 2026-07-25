@@ -114,8 +114,11 @@ def _print_status(checkout, repo, roots, all_diffs, diffs) -> None:
         print(f"          {c('dim', render.humanize_branch(repo.branch_info()))}")
         dirty = len([l for l in repo.porcelain() if l.strip()])
         if dirty:
-            print(f"          {c('yellow', f'{dirty} uncommitted change'
-                                           f'{"" if dirty == 1 else "s"} in the checkout')}"
+            # Build the plural separately: reusing the outer f-string's quote
+            # character inside a nested f-string is a SyntaxError before 3.12
+            # (PEP 701), and this package supports 3.10+.
+            s = "" if dirty == 1 else "s"
+            print(f"          {c('yellow', f'{dirty} uncommitted change{s} in the checkout')}"
                   f" {c('dim', '-- commit and push to share with your other machines')}")
         if repo.has_conflicts():
             print(c("bold_red", "          MERGE CONFLICTS -- resolve them before `ccs apply`"))

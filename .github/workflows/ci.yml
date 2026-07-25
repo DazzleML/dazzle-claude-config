@@ -12,6 +12,9 @@ jobs:
     if: github.repository != 'DazzleTools/git-repokit-template'
     runs-on: ${{ matrix.os }}
     strategy:
+      # One failing leg must not cancel the other seven: a 3.10-only syntax
+      # error once cancelled every Windows job, hiding whether they passed.
+      fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
         python-version: ['3.10', '3.11', '3.12', '3.13']
@@ -36,6 +39,15 @@ jobs:
       run: |
         python -m pip install --upgrade pip setuptools wheel
         pip install -e ".[dev]"
+
+    # Catches syntax the declared floor cannot parse -- notably PEP 701
+    # f-string quote reuse, which is legal on 3.12+ (where maintainers
+    # develop) and a SyntaxError on 3.10/3.11. Runs everywhere, so the
+    # failure is visible even when only newer interpreters are at hand.
+    - name: Verify syntax against the minimum supported Python
+      run: |
+        pip install ruff
+        ruff check --target-version py310 --select E9 --isolated dazzle_claude_config/ tests/
 
     - name: Lint with flake8
       run: |
