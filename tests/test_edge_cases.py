@@ -4,6 +4,11 @@ Original findings: tests/checklists/results/v0.1.x__Phase1__tester-unbounded-run
 These began as characterization tests of the buggy behavior; after the fix
 round they assert the CORRECTED behavior (per the "verbatim corrections
 become test cases" convention).
+
+New findings below (tester-unbounded-run-02, v0.2.1 adversarial pass):
+tests/checklists/results/v0.2.1__Feature__tester-unbounded-run-02.md -- began
+as characterization tests of the buggy behavior; flipped to assert the
+CORRECTED behavior in the same fix round.
 """
 from __future__ import annotations
 
@@ -17,6 +22,9 @@ import pytest
 from dazzle_claude_config.apply import apply
 from dazzle_claude_config.cli import main
 from dazzle_claude_config.collect import collect
+from dazzle_claude_config.manifest import Manifest, ManifestError
+
+from conftest import git
 
 
 @pytest.mark.skipif(sys.platform != "win32",
@@ -105,3 +113,129 @@ def test_type_mismatch_reported_and_skipped(env):
     assert any("dotclaude/agents" in m and "type mismatch" in m
                for m in r.mismatched)
     assert not (checkout / "dotclaude" / "agents" / "agents").exists()
+
+
+# --- v0.2.1 tester-unbounded-run-02 findings -------------------------------
+#
+# FIXED (was HIGH): apply() (checkout -> live) had NO deny-list awareness --
+# the guard stack only protected collect()'s direction, so a denied-shaped
+# file committed in the payload (accidental commit, bad merge, or a naive
+# raw-~/.claude push via implicit mode) was copied straight into the live
+# tree as an ordinary "applied:" line at exit 0. Now BOTH directions run
+# is_denied(): apply refuses, reports REFUSED with the deny pattern, and
+# exits 1 -- a denied file IN THE PAYLOAD is an anomaly to remove there,
+# unlike collect's live-side denials (the guard working as intended, exit 0).
+
+def test_apply_refuses_new_hard_denied_file_from_repo(env, backup_dir):
+    """New (repo-only) HARD_DENY-named file in the checkout: apply() refuses
+    it with the matching pattern; nothing reaches the live tree."""
+    claude, _, checkout, manifest, roots = env
+    (checkout / "dotclaude" / "agents" / ".credentials.json").write_text(
+        '{"repo":"should never reach live silently"}\n', encoding="utf-8")
+    r = apply(manifest, checkout, roots, backup_dir)
+    assert ("dotclaude/agents/.credentials.json", ".credentials.json") \
+        in r.refused_denied
+    assert "agents/.credentials.json" not in r.copied
+    assert not (claude / "agents" / ".credentials.json").exists()
+
+
+def test_apply_refuses_to_overwrite_live_hard_denied_file(env, backup_dir):
+    """Modified-path variant: the live side has a REAL file at a HARD_DENY
+    name; the checkout has a DIFFERENT version. apply() must leave the live
+    file untouched (the user's real secret survives, not as a backup but in
+    place)."""
+    claude, _, checkout, manifest, roots = env
+    (claude / "agents" / ".credentials.json").write_text(
+        '{"live":"the users real secret"}\n', encoding="utf-8")
+    (checkout / "dotclaude" / "agents" / ".credentials.json").write_text(
+        '{"repo":"stale or malicious payload content"}\n', encoding="utf-8")
+    r = apply(manifest, checkout, roots, backup_dir)
+    assert ("dotclaude/agents/.credentials.json", ".credentials.json") \
+        in r.refused_denied
+    assert "agents/.credentials.json" not in r.copied
+    assert (claude / "agents" / ".credentials.json").read_text(encoding="utf-8") == \
+        '{"live":"the users real secret"}\n'
+
+
+def test_cli_apply_reports_refused_denied_and_exits_1(env, capsys):
+    """CLI-level: `ccs apply` prints a REFUSED line naming the deny pattern
+    and telling the user to remove the file from the payload repo, exit 1."""
+    claude, user, checkout, _, _ = env
+    (checkout / "dotclaude" / "agents" / ".credentials.json").write_text(
+        "{}\n", encoding="utf-8")
+    rc = main(["--checkout-dir", str(checkout), "--claude-dir", str(claude),
+               "--user-claude", str(user), "apply"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "REFUSED (deny-list .credentials.json" in out
+    assert "remove it from the payload repo" in out
+    assert "applied: agents/.credentials.json" not in out
+    assert not (claude / "agents" / ".credentials.json").exists()
+
+
+# FIXED (was MEDIUM): Manifest.implicit()'s gate checked marker NAMES only,
+# but entry synthesis requires the correct TYPE -- so a repo whose only
+# marker was present with the WRONG type (e.g. a directory literally named
+# CLAUDE.md) passed the gate yet synthesized ZERO entries, and every verb
+# reported a misleadingly healthy "clean"/"nothing to do" at exit 0 with
+# nothing actually tracked. Now zero synthesized entries raises
+# ManifestError, matching HV.2's loud refusal for genuine non-config repos.
+
+def test_implicit_manifest_wrong_marker_type_refused(tmp_path):
+    """A directory named CLAUDE.md (not a file) passes the name gate but
+    yields no usable entry -- implicit() must refuse, not synthesize an
+    empty manifest."""
+    co = tmp_path / "mirror"
+    (co / "CLAUDE.md").mkdir(parents=True)  # directory, not a file
+    (co / "CLAUDE.md" / "not_actually_the_memory_file.txt").write_text(
+        "oops\n", encoding="utf-8")
+    with pytest.raises(ManifestError, match="expected type"):
+        Manifest.implicit(co)
+
+
+def test_cli_status_wrong_marker_type_exits_2(tmp_path, capsys):
+    """CLI-level: status against such a repo errors loudly (exit 2, clear
+    stderr message) instead of reporting a hollow 'status: clean'.
+
+    Git-inits `co` (matching test_implicit.py's bare_mirror pattern) so
+    CheckoutRepo() resolves to this repo itself rather than ambiently
+    discovering an unrelated enclosing repo (e.g. a tracked home directory
+    on the host running the suite) via `git rev-parse --show-toplevel`."""
+    co = tmp_path / "mirror"
+    (co / "CLAUDE.md").mkdir(parents=True)
+    git(co, "init", "-q", "-b", "main")
+    (co / ".keep").write_text("keep\n", encoding="utf-8")  # something to commit
+    git(co, "add", "-A")
+    git(co, "commit", "-q", "-m", "seed")
+    claude = tmp_path / "claude"
+    claude.mkdir()
+    user = tmp_path / "user"
+    user.mkdir()
+    rc = main(["--checkout-dir", str(co), "--claude-dir", str(claude),
+               "--user-claude", str(user), "status"])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "status: clean" not in captured.out
+    assert "expected type" in captured.err
+
+
+def test_implicit_mode_nested_git_repo_invisible_to_sync(tmp_path):
+    """Nested git repo inside a mirror (e.g. a skill cloned straight into
+    skills/): its .git internals are excluded from sync in both directions
+    -- never applied to live, never drift (tester run-02's organic repro
+    for the apply gap copied 28 .git files verbatim into live)."""
+    co = tmp_path / "mirror"
+    (co / "skills" / "cloned").mkdir(parents=True)
+    (co / "skills" / "cloned" / "SKILL.md").write_text("real\n", encoding="utf-8")
+    (co / "skills" / "cloned" / ".git").mkdir()
+    (co / "skills" / "cloned" / ".git" / "config").write_text(
+        "[core]\n", encoding="utf-8")
+    claude = tmp_path / "claude"
+    claude.mkdir()
+    roots = {"CLAUDE_DIR": claude, "USER_CLAUDE": tmp_path / "user"}
+    m = Manifest.implicit(co)
+    r = apply(m, co, roots, tmp_path / "backups")
+    assert "skills/cloned/SKILL.md" in r.copied
+    assert r.refused_denied == []
+    assert (claude / "skills" / "cloned" / "SKILL.md").exists()
+    assert not (claude / "skills" / "cloned" / ".git").exists()

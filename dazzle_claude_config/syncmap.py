@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .manifest import Entry, Manifest
 from .platform_info import os_key
-from .secrets import is_excluded
+from .secrets import is_denied, is_excluded
 
 
 def iter_files(base: Path) -> list[str]:
@@ -38,10 +38,14 @@ class EntryDiff:
     repo_only: list[str] = field(default_factory=list)   # apply-pending adds / removals
     modified: list[str] = field(default_factory=list)
     excluded: list[str] = field(default_factory=list)
+    denied_live: list[str] = field(default_factory=list)  # deny-matched, never sync
     mismatch: str | None = None  # file-vs-directory type conflict; entry skipped
+    total: int = 0  # files examined on either side (for "N files compared")
 
     @property
     def clean(self) -> bool:
+        # denied_live is intentionally NOT drift: deny-matched files can
+        # never sync, so their presence is the intended state.
         return not (self.live_only or self.repo_only or self.modified
                     or self.mismatch)
 
@@ -77,6 +81,7 @@ def diff_entry(entry: Entry, checkout: Path, roots: dict[str, Path],
     # Single-file entry
     if repo_base.is_file() or (not repo_base.exists() and live_base.is_file()):
         live_exists, repo_exists = live_base.is_file(), repo_base.is_file()
+        d.total = 1 if (live_exists or repo_exists) else 0
         if live_exists and not repo_exists:
             d.live_only.append("")
         elif repo_exists and not live_exists:
@@ -87,6 +92,7 @@ def diff_entry(entry: Entry, checkout: Path, roots: dict[str, Path],
 
     live_files = set(iter_files(live_base))
     repo_files = set(iter_files(repo_base))
+    d.total = len(live_files | repo_files)
 
     for rel in sorted(live_files):
         full_rel = f"{entry.target}/{rel}" if rel else entry.target
@@ -96,7 +102,10 @@ def diff_entry(entry: Entry, checkout: Path, roots: dict[str, Path],
             d.excluded.append(rel)
             continue
         if rel not in repo_files:
-            d.live_only.append(rel)
+            if is_denied(rel, manifest.deny):
+                d.denied_live.append(rel)
+            else:
+                d.live_only.append(rel)
         elif files_differ(live_base / rel, repo_base / rel):
             d.modified.append(rel)
     for rel in sorted(repo_files - live_files):

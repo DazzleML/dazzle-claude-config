@@ -25,6 +25,7 @@ class CollectResult:
     excluded: list[str] = field(default_factory=list)
     missing_live: list[str] = field(default_factory=list)  # in repo, gone locally (report only)
     git_ignored: list[str] = field(default_factory=list)   # A8 violations
+    denied_live: list[str] = field(default_factory=list)   # deny-matched, never sync
     failed: list[tuple[str, str]] = field(default_factory=list)  # (path, reason)
     mismatched: list[str] = field(default_factory=list)    # type-conflict entries
 
@@ -43,6 +44,7 @@ def collect(manifest: Manifest, checkout: Path, roots: dict[str, Path],
             result.mismatched.append(f"{d.entry.repo}: {d.mismatch}")
             continue
         result.excluded.extend(f"{d.entry.repo}/{r}" for r in d.excluded)
+        result.denied_live.extend(f"{d.entry.target}/{r}" for r in d.denied_live)
         result.missing_live.extend(f"{d.entry.repo}/{r}" if r else d.entry.repo
                                    for r in d.repo_only)
         for rel in d.live_only + d.modified:

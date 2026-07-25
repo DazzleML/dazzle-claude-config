@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["claude-code", "config", "sync", "dotfiles", "cli", "bootstrap"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",

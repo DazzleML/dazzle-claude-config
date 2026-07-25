@@ -40,15 +40,18 @@ def test_a1_planted_secret_refused(env):
     assert not (checkout / "dotclaude" / "agents" / "leaky.md").exists()
 
 
-def test_a1_denied_filename_refused(env):
+def test_a1_denied_filename_never_copied(env):
+    """Deny-matched live files are annotated (denied_live), never copied,
+    and -- per the v0.2.1 contract change (R6) -- are the guard WORKING,
+    not an alarm: no nonzero exit for their mere presence."""
     claude, _, checkout, manifest, roots = env
     (claude / "agents" / ".credentials.json").write_text("{}", encoding="utf-8")
     (claude / "agents" / "notes.secret").write_text("shh", encoding="utf-8")
     r = collect(manifest, checkout, roots)
-    refused = [rel for rel, _ in r.refused_denied]
-    assert "dotclaude/agents/.credentials.json" in refused
-    assert "dotclaude/agents/notes.secret" in refused  # manifest deny extends hard deny
+    assert "agents/.credentials.json" in r.denied_live
+    assert "agents/notes.secret" in r.denied_live  # manifest deny extends hard deny
     assert not (checkout / "dotclaude" / "agents" / ".credentials.json").exists()
+    assert not (checkout / "dotclaude" / "agents" / "notes.secret").exists()
 
 
 def test_collect_exclude_honored(env):

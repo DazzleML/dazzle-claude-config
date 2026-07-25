@@ -36,7 +36,16 @@ def user_claude_dir(override: str | None = None) -> Path:
 
 
 def default_checkout_dir() -> Path:
-    """Default payload checkout location: inside user territory, outside ~/.claude."""
+    """Payload checkout location when --checkout-dir is not given.
+
+    Honors CCS_CHECKOUT_DIR (symmetric with CLAUDE_CONFIG_DIR for the
+    config territory) so a clone that lives outside user territory does
+    not force the flag on every invocation. Default: inside user
+    territory, outside ~/.claude.
+    """
+    env = os.environ.get("CCS_CHECKOUT_DIR")
+    if env:
+        return Path(env).expanduser().resolve()
     return user_claude_dir() / "dazzle-claude-code-config"
 
 

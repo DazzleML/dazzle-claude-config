@@ -946,13 +946,18 @@
 
     <script>
         // Configuration
-        const GIST_RAW_BASE = 'https://gist.githubusercontent.com/djdarcy/0a340f306f6e7d914c75868eab406a6e/raw';
+        // Badge gist (vars.TRAFFIC_GIST_ID) holds state.json + the per-badge
+        // JSONs; the archive gist (vars.TRAFFIC_ARCHIVE_GIST_ID) holds
+        // archive.json. These are DIFFERENT gists -- pointing the raw base at
+        // the archive one 404s state.json and the page reports "Unable to
+        // load statistics".
+        const GIST_RAW_BASE = 'https://gist.githubusercontent.com/djdarcy/5329fbe75d9bbd8597cdc45863a22878/raw';
         const STATE_URL = GIST_RAW_BASE + '/state.json';
-        const ARCHIVE_GIST_ID = 'ARCHIVEID';
+        const ARCHIVE_GIST_ID = '0a340f306f6e7d914c75868eab406a6e';
         const ARCHIVE_API_URL = 'https://api.github.com/gists/' + ARCHIVE_GIST_ID;
-        const REPO_OWNER = 'OWNER';
-        const REPO_NAME = 'REPO';
-        const REPO_CREATED = '2025-01-01'; // for project age calculation
+        const REPO_OWNER = 'DazzleML';
+        const REPO_NAME = 'dazzle-claude-config';
+        const REPO_CREATED = '2026-07-24'; // for project age calculation
         var primaryAuthor = null; // resolved from contributors API (org-owned repos have owner=org, not committer)
 
         // State

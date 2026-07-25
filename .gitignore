@@ -131,6 +131,16 @@ credentials.json
 *auth*.json
 *config*.json
 
+# ...but this project's SOURCE is about secrets, so the broad patterns above
+# swallow real modules/tests. Un-ignore them explicitly. (These negations are
+# load-bearing: without the first one, dazzle_claude_config/secrets.py -- the
+# entire guard stack -- silently never gets committed and a fresh clone or
+# built wheel cannot import ccs at all. Exactly the A8 failure class ccs
+# itself exists to catch.)
+!dazzle_claude_config/secrets.py
+!tests/test_secrets.py
+!docs/**/*secret*
+
 # Project-specific directories
 /log/
 /logs/

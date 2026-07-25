@@ -15,6 +15,7 @@ from pathlib import Path
 from .backup import BackupSession
 from .gitops import CheckoutRepo
 from .manifest import Manifest
+from .secrets import is_denied
 from .syncmap import diff_all, entry_applies, entry_bases
 
 
@@ -26,6 +27,7 @@ class ApplyConflictError(RuntimeError):
 class ApplyResult:
     copied: list[str] = field(default_factory=list)
     seeded: list[str] = field(default_factory=list)
+    refused_denied: list[tuple[str, str]] = field(default_factory=list)  # (repo rel, pattern)
     removals_pending: list[str] = field(default_factory=list)  # reported, not synced
     removals_staged: list[str] = field(default_factory=list)   # moved to backup
     deferred: list[str] = field(default_factory=list)          # render/plugins entries
@@ -60,6 +62,14 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
             dest = d.live_base / rel if rel else d.live_base
             display = f"{d.entry.target}/{rel}" if rel else d.entry.target
             if rel in d.repo_only and not src.exists():
+                continue
+            # Deny-list guards BOTH directions: a HARD_DENY/manifest-denied
+            # file committed in the payload must never reach the live tree
+            # (tester run-02: apply had no deny awareness at all).
+            pattern = is_denied(rel or src.name, manifest.deny)
+            if pattern:
+                repo_display = f"{d.entry.repo}/{rel}" if rel else d.entry.repo
+                result.refused_denied.append((repo_display, pattern))
                 continue
             if not dry_run:
                 try:
@@ -96,6 +106,10 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
         result.only_matched += 1
         live_base, repo_base = entry_bases(
             entry, checkout, roots, manifest.territories)
+        pattern = is_denied(entry.repo, manifest.deny)
+        if pattern:
+            result.refused_denied.append((entry.repo, pattern))
+            continue
         if repo_base.is_file() and not live_base.exists():
             if not dry_run:
                 try:

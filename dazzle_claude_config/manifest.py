@@ -61,6 +61,17 @@ class Manifest:
         someone made by pushing their config dir as-is)."""
         present = {p.name for p in checkout.iterdir()} if checkout.is_dir() else set()
         if not (present & _IMPLICIT_MARKERS):
+            # An EMPTY checkout is the new-payload case, not a wrong-repo
+            # case -- someone cloned the fresh repo they just created. Tell
+            # them how to seed it rather than only what is missing.
+            if not (present - {".git"}):
+                raise ManifestError(
+                    f"{checkout} is an empty repo. To turn it into a payload, "
+                    "create the surfaces you want tracked, then collect:\n"
+                    "    mkdir skills commands agents      (whichever you use)\n"
+                    "    touch CLAUDE.md                   (if you want your memory synced)\n"
+                    "    ccs collect                       (copies your live config in, guarded)\n"
+                    "    git add -A && git commit -m 'my config' && git push")
             raise ManifestError(
                 f"no {MANIFEST_NAME} and {checkout} does not look like a "
                 "Claude config dir (none of: " + ", ".join(sorted(_IMPLICIT_MARKERS)) + ")")
@@ -73,11 +84,24 @@ class Manifest:
             if (checkout / f).is_file():
                 entries.append(Entry(repo=f, strategy="copy",
                                      territory="dotclaude", target=f))
+        if not entries:
+            # Marker NAMES matched but none is its expected type (e.g. a
+            # directory literally named CLAUDE.md). Without this, every verb
+            # would report a misleadingly healthy "clean"/"nothing to do"
+            # while tracking nothing at all (tester run-02).
+            found = sorted(present & _IMPLICIT_MARKERS)
+            raise ManifestError(
+                f"no {MANIFEST_NAME} and {checkout} has config-marker names "
+                f"({', '.join(found)}) but none is usable as its expected type "
+                "(file vs directory) -- refusing to treat it as a config mirror")
         return cls(
             version=SUPPORTED_VERSION,
             territories={"dotclaude": {"root_var": "CLAUDE_DIR", "repo_dir": "."}},
             entries=entries,
-            collect_exclude=["**/__pycache__/**", "**/*.pyc"],
+            # Nested git repos inside a mirror (a skill cloned straight into
+            # skills/, etc.) are never config -- invisible to sync in both
+            # directions, matching __pycache__ handling.
+            collect_exclude=["**/__pycache__/**", "**/*.pyc", "**/.git/**"],
             deny=[],
             path=checkout / MANIFEST_NAME,
         )

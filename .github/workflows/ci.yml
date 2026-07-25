@@ -10,9 +10,10 @@ jobs:
   test:
     # Skip on the template repo itself (no pyproject.toml until instantiated)
     if: github.repository != 'DazzleTools/git-repokit-template'
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [windows-latest, ubuntu-latest]
         python-version: ['3.10', '3.11', '3.12', '3.13']
 
     steps:
