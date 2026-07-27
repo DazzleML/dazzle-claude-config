@@ -4,6 +4,30 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-07-27
+
+### Fixed
+- **Line-ending style is no longer reported as drift.** If your payload has `* text=auto` in `.gitattributes` -- the usual setting -- git stores LF and checks out CRLF on Windows, while your live `~/.claude` holds whatever wrote it, usually LF. ccs compared raw bytes, so every text file differed on every Windows machine, permanently. Measured against a real payload:
+
+  ```
+  ccs status   67 files modified
+  git diff     20 files with any content change
+               47 were line endings only
+  ```
+
+  ccs now reports 20, matching git exactly. Comparison normalises line endings for text and compares bytes for binary -- the same rule git applies.
+
+  This mattered more than it looks. The noise buried 20 genuine edits among 67 reported ones, made `collect` rewrite 47 untouched files, and turned the report you are meant to read carefully *before* files move into something you skim. Working out which 20 mattered took a purpose-written triage script, which is the drift report failing at its only job.
+
+  Comparison only: nothing here rewrites a file. Canonicalising line endings during `apply` would mean editing your live config to fix a reporting problem.
+
+- **Binary files are never normalised.** A `0x0D` byte inside a PNG is content, not a line ending. Files are sniffed for a NUL byte in the first 8000 bytes -- the same heuristic git uses -- and compared byte-for-byte when binary. Without this, two genuinely different binaries could compare equal and a real change would be dropped on the next sync.
+
+- **Comparing against a missing or unreadable file now reports drift instead of raising.** `filecmp.cmp` throws before the file is read, so the guard has to cover both paths. Callers check existence first today, but a comparison helper that raises on a missing path is a trap for the next caller.
+
+### Tests
+- 14 cases: CRLF/CR/mixed normalisation, real content changes still detected (including an edit that *also* flips line endings), trailing whitespace still significant, binary never normalised, missing files, empty files.
+
 ## [0.2.2] - 2026-07-25
 
 ### Fixed
@@ -57,7 +81,8 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.1.0...v0.2.0
