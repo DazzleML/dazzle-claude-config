@@ -29,6 +29,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -56,6 +57,13 @@ CONFLICT_MARKERS = ("<<<<<<<", "|||||||", "=======", ">>>>>>>")
 # Extended by --regressed-pattern; the default is the one measured this session.
 DEFAULT_REGRESSED_PATTERNS = ("/home/dev/claude/",)
 
+# How similar a replacement must be to count as a REWRITE of the line it
+# replaced rather than unrelated text that clobbered it. Tuned against the
+# real case: "Two of these are re-entrant..." vs "Three of these are
+# re-entrant..." scores far above this; "THEIRS-SECTION-A" vs "OURS-ONLY"
+# scores far below.
+_SUPERSEDE_RATIO = 0.5
+
 
 class MergeError(RuntimeError):
     """Merge could not proceed (bad tool, unreadable input, refused entry)."""
@@ -78,6 +86,12 @@ class MergeItem:
     live: Path          # ours
     repo: Path          # theirs
     base: Path | None = None   # None => no ancestry; honest 2-way
+    repo_dest: Path | None = None  # WHERE the checkout copy is installed.
+                                   # Distinct from `repo`, which is only the
+                                   # CONTENT of theirs -- on the HEAD axis that
+                                   # is a staging file, and writing the merge
+                                   # there installed nothing and clobbered the
+                                   # copy of theirs.
     reason: str | None = None  # set when the item is refused rather than merged
     sibling: tuple | None = None  # (path, sha, n, ratio) -- nearest historical
                                   # version, REJECTED as a base but worth a look
@@ -172,7 +186,8 @@ def _head_items(manifest: Manifest, checkout: Path, roots: dict[str, Path],
         stage.mkdir(parents=True, exist_ok=True)
         theirs = stage / (item.label.replace("/", "__").replace("\\", "__") + ".head")
         theirs.write_bytes(p.stdout)
-        item.repo = theirs
+        item.repo = theirs                     # content of theirs (staged)
+        item.repo_dest = checkout / entry.repo  # where it actually installs
         rej: list = []
         found = infer_base(checkout, entry.repo, live.read_bytes(), p.stdout,
                            rejected=rej)
@@ -340,7 +355,8 @@ def _items_for_diff(d: EntryDiff) -> list[MergeItem]:
     for rel in d.modified:
         live = d.live_base / rel if rel else d.live_base
         repo = d.repo_base / rel if rel else d.repo_base
-        item = MergeItem(entry=d.entry, rel=rel, live=live, repo=repo)
+        item = MergeItem(entry=d.entry, rel=rel, live=live, repo=repo,
+                         repo_dest=repo)
         if strategy in MERGE_REFUSED_STRATEGIES:
             # Name the source layer instead of merging the composed target.
             layers = ", ".join([d.entry.repo, *d.entry.overlays]) or d.entry.repo
@@ -391,6 +407,61 @@ def _tool_usable(name: str) -> bool:
     if not exe:
         return False
     return bool(shutil.which(exe)) or Path(exe).exists()
+
+
+def resolve_difftool(explicit: str | None = None) -> str:
+    """Pick a TWO-pane diff tool, verifying its binary exists.
+
+    Separate registry from mergetool: git keeps `difftool.<name>.cmd` and
+    `mergetool.<name>.cmd` apart, and a name can exist in one and not the
+    other. Measured on this machine: `bc4` is a difftool entry only, and
+    `beyondcompare4` a mergetool entry only -- so reusing the merge resolver
+    here would fail to find a working two-pane tool that is right there.
+    """
+    def usable(name: str) -> bool:
+        rc, cmd = _git(["config", "--get", f"difftool.{name}.cmd"])
+        if rc != 0 or not cmd:
+            return False
+        exe = _executable_of(cmd)
+        return bool(exe) and (bool(shutil.which(exe)) or Path(exe).exists())
+
+    if explicit:
+        if not usable(explicit):
+            raise MergeError(
+                f"diff tool {explicit!r} is configured but its binary was not "
+                f"found; check `git config difftool.{explicit}.cmd`")
+        return explicit
+
+    candidates: list[str] = []
+    rc, configured = _git(["config", "--get", "diff.tool"])
+    if rc == 0 and configured:
+        candidates.append(configured)
+    rc, out = _git(["config", "--get-regexp", r"^difftool\..*\.cmd$"])
+    if rc == 0:
+        names = [line.split()[0].split(".", 2)[1]
+                 for line in out.splitlines() if line.strip()]
+        candidates.extend(sorted(set(names), key=lambda n: (-len(n), n)))
+    for name in candidates:
+        if usable(name):
+            return name
+    raise MergeError("no usable diff tool found -- set `git config diff.tool`")
+
+
+def launch_difftool(tool: str, left: Path, right: Path) -> int:
+    """Open two files side by side. Same substitution rule as the merge path:
+    cmd.exe does not expand $VAR, so ccs expands it rather than the shell."""
+    if not interactive():
+        raise MergeError(
+            "no console attached -- refusing to launch an interactive diff tool")
+    rc, cmd = _git(["config", "--get", f"difftool.{tool}.cmd"])
+    if rc != 0 or not cmd:
+        raise MergeError(f"no difftool.{tool}.cmd configured")
+    line = cmd
+    for name, value in (("LOCAL", str(left)), ("REMOTE", str(right))):
+        line = line.replace("${" + name + "}", value).replace("$" + name, value)
+    flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+    subprocess.Popen(line, shell=True, creationflags=flags)
+    return 0
 
 
 def resolve_tool(explicit: str | None = None) -> str:
@@ -567,17 +638,56 @@ def validate(item: MergeItem, merged: Path,
     # named-probe check below only runs when a caller supplies probes, and the
     # CLI initially did not. That gap let a run where the tool wrote nothing
     # report "merged" while the other side contributed zero content.
-    ours_b = _normalize_eol(item.live.read_bytes()) if item.live.is_file() else b""
-    theirs_b = _normalize_eol(item.repo.read_bytes()) if item.repo.is_file() else b""
-    if ours_b != theirs_b:
-        if raw == ours_b:
+    # Ask what was LOST, not what the result resembles. A merge whose output
+    # equals ours is perfectly valid when the other side had nothing unique to
+    # contribute -- that is a no-op merge, not a failed one. Testing byte
+    # identity instead rejected exactly that case: a file where theirs was a
+    # subset of ours failed with "the other side contributed nothing", which
+    # was true and yet not a problem.
+    # SUPERSEDED is not LOST. A line the other side holds may be an older
+    # wording that our side rewrote -- "Two of these are re-entrant" against
+    # "Three of these...". Keeping both would make the document contradict
+    # itself, so its absence is correct. Only PURE deletions count as loss:
+    # a `replace` region means the result carries replacement text in that
+    # position, while a `delete` region means the content simply vanished.
+    for side, src in (("theirs", item.repo), ("ours", item.live)):
+        other = item.live if side == "theirs" else item.repo
+        if not src.is_file() or not other.is_file():
+            continue
+        src_lines = _normalize_eol(src.read_bytes()).decode("utf-8", "replace").splitlines()
+        res_lines = text.splitlines()
+        dropped: list[str] = []
+        for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(
+                None, src_lines, res_lines, autojunk=False).get_opcodes():
+            if tag == "delete":
+                dropped += [l for l in src_lines[i1:i2] if l.strip()]
+            elif tag == "replace":
+                # A replacement may be a REWRITE of the same statement, or
+                # unrelated text that merely aligned there. Similarity tells
+                # them apart: "Two of these are re-entrant..." against "Three
+                # of these are re-entrant..." is a rewrite; "THEIRS-SECTION-A"
+                # against "OURS-ONLY" is a clobber. Only clobbers are loss.
+                gone, came = src_lines[i1:i2], res_lines[j1:j2]
+                for old in gone:
+                    if not old.strip():
+                        continue
+                    best = max((difflib.SequenceMatcher(None, old, new).ratio()
+                                for new in came), default=0.0)
+                    if best < _SUPERSEDE_RATIO:
+                        dropped.append(old)
+        # Only content the OTHER side never had can have been lost here;
+        # anything both sides share cannot go missing by choosing a side.
+        other_lines = _lines(other)
+        dropped = [l for l in dropped if l.strip() not in other_lines]
+        # Dropping a regressed pattern is the POINT, not a loss. The hints tell
+        # the user to prefer the side without it; flagging its absence as
+        # missing content would have the tool contradicting its own advice.
+        dropped = [l for l in dropped
+                   if not any(pat in l for pat in regressed)]
+        if dropped:
             res.failures.append(
-                "result is identical to ours -- the other side contributed "
-                "nothing (tool closed without saving?); this is not a merge")
-        elif raw == theirs_b:
-            res.failures.append(
-                "result is identical to theirs -- our side contributed "
-                "nothing; local changes would be lost")
+                f"{len(dropped)} line(s) present only in {side} were dropped "
+                f"outright -- not replaced (first: {sorted(dropped)[0][:70]!r})")
 
     known = _lines(item.live) | _lines(item.repo) | _lines(item.base)
     if known:
@@ -675,6 +785,15 @@ def two_way_labels(manifest: Manifest, checkout: Path,
         live = roots[manifest.territories[entry.territory]["root_var"]] / entry.target
         if not live.is_file():
             continue
+        # RESOLVED means live matches the checkout's WORKING TREE, not its
+        # HEAD. A merge installs into the working tree; HEAD does not move
+        # until you commit. Testing against HEAD kept reporting a finished
+        # merge as unresolved and refused `apply` indefinitely -- there is
+        # nothing for a one-way copy to destroy when the two sides agree.
+        worktree = checkout / entry.repo
+        if worktree.is_file() and _normalize_eol(worktree.read_bytes()) == \
+                _normalize_eol(live.read_bytes()):
+            continue
         p_ = subprocess.run(["git", "show", f"HEAD:{entry.repo}"],
                             cwd=str(checkout), capture_output=True)
         if p_.returncode != 0 or not p_.stdout:
@@ -739,15 +858,19 @@ def run(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
             res.no_base.append(item)
         if item.sibling is not None:
             res.siblings.append(item)
-        # Re-seeding would silently discard partial work from a previous run.
-        # Observed: the command was run twice; the second run overwrote the
-        # first run's output pane before the tool ever opened.
-        if merged.exists() and not _differs_bytes(merged, item.live):
-            seed(item, merged, union=union)   # untouched since seeding -- safe to redo
-        elif merged.exists():
-            res.resumed.append(item)    # human edits present: keep them
+        # Compare the output pane against WHAT WE SEEDED, recorded in a
+        # sidecar. Comparing it against `ours` was wrong in both directions:
+        # a union seed never equals ours, so every re-run reported "resumed"
+        # even when nothing had been touched -- and whenever an edited result
+        # did coincide with ours it was mistaken for a fresh seed and
+        # overwritten, discarding real work done in the diff tool.
+        stamp = merged.parent / (merged.name + ".seed")
+        if not merged.exists() or (stamp.exists()
+                                   and not _differs_bytes(merged, stamp)):
+            seed(item, merged, union=union)   # absent, or untouched since seeding
+            stamp.write_bytes(merged.read_bytes())
         else:
-            seed(item, merged, union=union)
+            res.resumed.append(item)          # human edits present: keep them
         if launch_tool:
             launch(resolved_tool, item, merged, item.base or empty,
                    wait=not preview)
@@ -779,18 +902,37 @@ def _write_back(item: MergeItem, merged: Path,
                 backup_dir: Path | None = None) -> None:
     """Install a VALIDATED merge on both sides. Never called before validate().
 
+    Writes to `repo_dest`, NOT `repo`. On the HEAD axis `repo` is the staged
+    copy of theirs inside the merge workspace, so writing there installed
+    nothing into the payload repo and destroyed the staged original. The live
+    tree got the merge, the checkout did not, and `--accept` reported success.
+
     The merge runs on LF-normalised copies, so the result is restored to the
     line-ending style the LIVE file already used -- rewriting a 966-line file
     from CRLF to LF would show up as a whole-file change in every later diff.
     """
+    dest_repo = item.repo_dest or item.repo
     blob = _normalize_eol(merged.read_bytes())
     eol = _dominant_eol(item.live.read_bytes()) if item.live.is_file() else b"\n"
     if eol == b"\r\n":
         blob = blob.replace(b"\n", b"\r\n")
+
+
+    # Back up BOTH originals BEFORE touching either. A merge is the one
+    # operation that writes two trees at once, so a bad result costs twice as
+    # much to undo. Raise rather than proceed: a silent backup failure while
+    # reporting "originals backed up" is the defect this module exists to stop.
+    if backup_dir is not None:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        safe = item.label.replace("/", "__").replace("\\", "__")
+        for role, src in (("live", item.live), ("repo", dest_repo)):
+            if src.is_file():
+                (backup_dir / f"{safe}.{role}.bak").write_bytes(src.read_bytes())
+
     item.live.parent.mkdir(parents=True, exist_ok=True)
-    item.repo.parent.mkdir(parents=True, exist_ok=True)
+    dest_repo.parent.mkdir(parents=True, exist_ok=True)
     item.live.write_bytes(blob)
-    item.repo.write_bytes(blob)
+    dest_repo.write_bytes(blob)
 
 
 def _console_attached(stream) -> bool:
@@ -872,7 +1014,17 @@ def launch(tool: str, item: MergeItem, merged: Path, base: Path,
         return 0
 
     try:
-        return proc.wait()
+        # POLL, do not block. On Windows `Popen.wait()` sits in
+        # WaitForSingleObject with an infinite timeout, and Python cannot
+        # deliver KeyboardInterrupt until it returns -- so Ctrl+C appeared to
+        # do nothing and only took effect once the diff tool was closed, which
+        # is precisely when it was no longer wanted. A short sleep loop is
+        # interruptible, so Ctrl+C lands immediately.
+        while True:
+            rc = proc.poll()
+            if rc is not None:
+                return rc
+            time.sleep(0.15)
     except KeyboardInterrupt:
         # Leave the tool OPEN. The user interrupted ccs, not their editor, and
         # an unsaved merge in a GUI is exactly the thing not to destroy.

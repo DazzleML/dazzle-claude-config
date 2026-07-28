@@ -29,6 +29,7 @@ class ApplyResult:
     seeded: list[str] = field(default_factory=list)
     refused_denied: list[tuple[str, str]] = field(default_factory=list)  # (repo rel, pattern)
     removals_pending: list[str] = field(default_factory=list)  # reported, not synced
+    local_only: list[str] = field(default_factory=list)        # never in the checkout
     removals_staged: list[str] = field(default_factory=list)   # moved to backup
     deferred: list[str] = field(default_factory=list)          # render/plugins entries
     failed: list[tuple[str, str]] = field(default_factory=list)  # (path, reason)
@@ -86,6 +87,15 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
         # live-only files under a manifest-owned target: removal candidates
         for rel in d.live_only:
             display = f"{d.entry.target}/{rel}" if rel else d.entry.target
+            # A file the checkout NEVER had is a local ADDITION, not something
+            # the checkout deleted. Calling it a "removal pending" implied the
+            # user had to run `collect` before `apply` was safe -- forcing an
+            # order that is not actually required, over a file that was never
+            # at risk. Git can tell the two apart, so ask it.
+            repo_rel = f"{d.entry.repo}/{rel}" if rel else d.entry.repo
+            if repo is not None and not repo.path_in_history(repo_rel):
+                result.local_only.append(display)
+                continue
             if sync_removals:
                 if not dry_run:
                     try:

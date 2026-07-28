@@ -5,6 +5,7 @@ Exit codes (A7): 0 = clean/success, 1 = drift or refusals present, 2 = error.
 from __future__ import annotations
 
 import argparse
+import pathlib
 import sys
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from .manifest import Manifest, ManifestError
 from .platform_info import default_checkout_dir, territory_roots
 from .render import c
 from . import userconfig
-from .syncmap import diff_all, line_stats
+from .syncmap import _normalize_eol, diff_all, files_differ, line_stats
 
 EXIT_CLEAN, EXIT_DRIFT, EXIT_ERROR = 0, 1, 2
 
@@ -125,6 +126,16 @@ day to day, once it is installed:
                                 "line budget")
             g.add_argument("--compact", action="store_true",
                            help="one line per entry, never the per-file breakdown")
+        if verb == "diff":
+            sp.add_argument("path", nargs="?", default=None,
+                            help="show the actual line-by-line difference for one "
+                                 "file (default: list which files differ)")
+            sp.add_argument("--difftool", action="store_true",
+                            help="open the two sides in your diff tool instead of "
+                                 "printing a unified diff (needs a path)")
+            sp.add_argument("--tool", default=None,
+                            help="git difftool name (default: probe for one whose "
+                                 "binary actually exists)")
         if verb == "apply":
             sp.add_argument("--only", default=None,
                             help="limit to entries whose repo path starts with this prefix")
@@ -185,6 +196,78 @@ def _print_entry_files(d) -> None:
         stats = (f"{ol} only live / {ch} changed / {orp} only checkout"
                  f", {reg} region{'' if reg == 1 else 's'}")
         print(f"      {c('magenta', 'both     ')}  {rel:<{width}}  {c('dim', stats)}")
+
+
+def _resolve_pair(all_diffs, want: str):
+    """Find (live_path, repo_path, target_label, repo_label) for a user path.
+
+    Looks in the DIFFERING set first, then falls back to resolving against the
+    manifest, so a file that is perfectly in sync still resolves. Without the
+    fallback an in-sync file was indistinguishable from a typo -- and after a
+    merge, in-sync is the normal state.
+    """
+    for d in all_diffs:
+        for rel in [*d.modified, *d.live_only, *d.repo_only]:
+            target = f"{d.entry.target}/{rel}" if rel else d.entry.target
+            repo = f"{d.entry.repo}/{rel}" if rel else d.entry.repo
+            if target.endswith(want) or repo.endswith(want):
+                lv = d.live_base / rel if rel else d.live_base
+                rp = d.repo_base / rel if rel else d.repo_base
+                return lv, rp, target, repo
+    for d in all_diffs:
+        for label in (d.entry.target, d.entry.repo):
+            if not label:
+                continue
+            rel = ""
+            if label.endswith(want):
+                pass
+            elif want.startswith(label.rstrip("/") + "/"):
+                rel = want[len(label.rstrip("/")) + 1:]
+            else:
+                continue
+            lv = d.live_base / rel if rel else d.live_base
+            rp = d.repo_base / rel if rel else d.repo_base
+            if lv.is_file() or rp.is_file():
+                target = f"{d.entry.target}/{rel}" if rel else d.entry.target
+                repo = f"{d.entry.repo}/{rel}" if rel else d.entry.repo
+                return lv, rp, target, repo
+    return None
+
+
+def _launch_file_difftool(all_diffs, wanted: str, tool: str | None) -> int:
+    """Open live vs checkout for one file in the user's own diff tool.
+
+    Launches whenever both sides RESOLVE, not only when they differ. If the
+    user asked for the tool, open the tool -- confirming two files are
+    identical by looking at them is a legitimate reason to want it, and
+    refusing with "nothing to compare" answers a question nobody asked.
+    """
+    want = wanted.replace(chr(92), "/").strip("/")
+    found = _resolve_pair(all_diffs, want)
+    if found is None:
+        print(c("yellow", f"no file matches {wanted!r}")
+              + c("dim", " -- run `ccs diff` with no argument to list what differs"))
+        return EXIT_CLEAN
+    lv, rp, target, repo = found
+    # A file present on only one side is an ADD or a REMOVE, and looking at
+    # it is exactly what you want -- refusing to open it answers a question
+    # nobody asked. Substitute an empty file for the absent side, which is
+    # what git difftool does for a new file.
+    import tempfile
+    empty = None
+    if not lv.is_file() or not rp.is_file():
+        empty = pathlib.Path(tempfile.mkdtemp()) / "(absent)"
+        empty.write_bytes(b"")
+        if not lv.is_file():
+            lv = empty
+        if not rp.is_file():
+            rp = empty
+    name = merge.resolve_difftool(tool)
+    merge.launch_difftool(name, rp, lv)
+    same = empty is None and not files_differ(lv, rp)
+    note = " (identical -- opened anyway, you asked)" if same else ""
+    print(c("dim", f"opened {name}: checkout/{repo} vs live/{target}{note}"))
+    return EXIT_CLEAN if same else EXIT_DRIFT
 
 
 def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None) -> None:
@@ -382,6 +465,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{c('green', 'seeded')} {rel} {c('dim', '-- was absent locally')}")
             for rel in r.removals_staged:
                 print(f"{c('yellow', 'removal staged to backup')}: {rel}")
+            for rel in r.local_only:
+                print(f"{c('dim', 'local only')} {rel} "
+                      + c("dim", "-- new here, never in the checkout; left alone"))
             for rel in r.removals_pending:
                 print(f"{c('yellow', 'removal PENDING')}: {rel} "
                       + c("dim", "-- local file not in the checkout; "
@@ -455,7 +541,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(c("dim", f"originals backed up: {r.backup_dir}"))
             if r.workspace:
                 print(c("dim", f"workspace: {r.workspace}"))
-            if not (r.refused or r.planned or r.resolved or r.unresolved):
+            # r.previewed counts: a preview resolves nothing by design, so
+            # reporting "nothing to do" right after listing a previewed file
+            # contradicts the line printed immediately above it.
+            if not (r.refused or r.planned or r.resolved
+                    or r.unresolved or r.previewed):
                 print(c("green", "merge: nothing to do")
                       + " -- no file differs on both sides")
             # Validation failure is the alarm this whole verb exists for: a
@@ -477,6 +567,14 @@ def main(argv: list[str] | None = None) -> int:
                           userconfig.load(roots.get('USER_CLAUDE'), over))
             return EXIT_CLEAN if not diffs else EXIT_DRIFT
         else:
+            # `ccs diff <path>` shows the CONTENT, not just the filename.
+            # "merged and installed" is a claim; this is how you check it.
+            wanted = getattr(args, "path", None)
+            if wanted:
+                if getattr(args, 'difftool', False):
+                    return _launch_file_difftool(all_diffs, wanted,
+                                                 getattr(args, 'tool', None))
+                return _print_file_diff(all_diffs, wanted)
             for d in diffs:
                 if d.mismatch:
                     print(c("red", f"mismatch:   {d.entry.repo} ({d.mismatch})"))

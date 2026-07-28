@@ -107,3 +107,15 @@ class CheckoutRepo:
             ["git", "check-ignore", "--stdin"], cwd=str(self.path),
             input="\n".join(rel_paths), capture_output=True, text=True)
         return [l for l in proc.stdout.splitlines() if l.strip()]
+
+    def path_in_history(self, rel_path: str) -> bool:
+        """Has this path ever existed in the repo, on any branch?
+
+        Distinguishes "the checkout deleted it" from "the checkout never had
+        it". Without that, a brand-new local file looks identical to one the
+        other machine removed, and `apply` reports it as a pending removal --
+        implying an order of operations the user does not actually need.
+        """
+        rc, out, _ = _run(["log", "--all", "--oneline", "--", rel_path],
+                          cwd=self.path)
+        return rc == 0 and bool(out.strip())

@@ -4,6 +4,30 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-28
+
+Fixes both issues 0.3.0 shipped as known, plus five more found by running the tool against a real config rather than a fixture. Every one was the same defect wearing a different costume -- a comparison made against the wrong reference -- which is written up in the reference-model analysis noted at the end.
+
+### Fixed
+- **`ccs merge --accept` now installs into the checkout, not into its own scratch directory.** `MergeItem.repo` was serving two jobs at once: *the content of theirs* and *where the result gets installed*. On the incoming-upstream axis those are different paths, so the merge landed in the live tree and in a workspace staging file, leaving the payload repo untouched while reporting success. Destination is now a separate field.
+- **The pre-install backup is actually written**, and written *before* either side is touched. It backs up the checkout's real file rather than the staging copy, so `~/claude/backups/ccs-merge/` now genuinely contains both originals.
+- **Re-running `merge` no longer discards your edits.** The resume check compared the output pane against *ours*; it now compares against what ccs seeded, recorded in a sidecar. The old test was wrong in both directions -- a union seed never equals ours, so every re-run claimed "resumed" even when nothing had been touched, and a resolution that happened to match ours was mistaken for an untouched seed and overwritten.
+- **A merge whose result equals what you already have is accepted.** It asked what the result *resembled* rather than what was *lost*, so a file where the other side had nothing unique to contribute was rejected as "the other side contributed nothing" -- true, and not a problem. Loss is now judged per side from lines dropped outright.
+- **Superseded wording is no longer counted as lost content.** "Two of these are re-entrant" against "Three of these are re-entrant" is a rewrite, not a deletion; keeping both would make the document contradict itself. A replacement similar to what it replaced is a rewrite, a dissimilar one is a clobber, and only clobbers are loss. Dropping a known regressed pattern is likewise not loss -- the tool recommends dropping it.
+- **`collect` and `apply` no longer refuse a merge you already finished.** The two-way guard compared live against **HEAD**, but a merge installs into the working tree and HEAD does not move until you commit -- so a completed merge was reported as unresolved indefinitely. Resolution is judged from the working tree.
+- **A file that exists only in your live config is no longer reported as a pending removal.** `apply` treated "absent from the checkout" as "the checkout deleted it", implying you had to run `collect` first over a file that was never at risk. Git is now asked whether the path ever existed; one that never did is reported as `local only -- new here, never in the checkout; left alone`.
+- **Ctrl+C interrupts `ccs merge` immediately** (verified). `Popen.wait()` blocks in `WaitForSingleObject` on Windows, so the interrupt was queued and only delivered once the diff tool was closed -- exactly when it was no longer wanted. The wait now polls. The tool is left open and untouched; an earlier attempt killed the whole process tree, which closed the user's editor.
+- **`ccs merge --preview` returns immediately** (verified) instead of blocking the shell until the diff tool is closed. There is nothing to come back for in a preview.
+
+### Added
+- **`ccs diff <path>`** -- the line-by-line difference for one file, live vs checkout, rather than only a list of which files differ. Added because "merged and installed" is a claim with no way to check it. Distinguishes three cases that were previously conflated: the file differs (shows the diff), the file is in sync (`identical -- live and the checkout agree`), and no such file. The middle case is the normal one right after a merge, and it used to report "no match".
+- **`ccs diff <path> --difftool`** opens the two sides in your own diff tool instead of printing, which is what you want for anything longer than a screen. It reads git's `difftool.*` registry -- deliberately separate from `mergetool.*`, since a name can exist in one and not the other (measured here: `bc4` is difftool-only, `beyondcompare4` mergetool-only, so reusing the merge resolver would have missed a working tool). `--tool` overrides the choice. It opens whenever the path resolves, not only when the two sides differ -- confirming a file is identical by looking at it is a legitimate reason to want the tool, and a file present on only one side opens against an empty side rather than being refused.
+
+### Notes
+- `ai_merge_command` remains **unimplemented**; `merge` suggests it and prints deterministic resolution hints instead -- regressed patterns and convention drift, which resolved the real cases here without a model.
+- `apply` and `collect` have been exercised via `--dry-run` against a real payload this cycle, not run to completion; the merge paths have been run end to end.
+- Analysis: `2026-07-28__14-55-26__dwp6-the-reference-model.md` names the seven references ccs holds (live, worktree, HEAD, staged theirs, seed, base, path history) and which question each answers. Nine of eleven defects found this cycle were a comparison against the wrong one.
+
 ## [0.3.0] - 2026-07-28
 
 ### Added
@@ -115,7 +139,7 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.3.1...HEAD
 [0.2.3]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.0...v0.2.1

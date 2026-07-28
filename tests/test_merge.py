@@ -117,14 +117,16 @@ def test_result_identical_to_ours_is_rejected_without_probes(tmp_path):
     so the most important check was inert in production while the unit tests
     -- which supply probes explicitly -- stayed green.
 
-    The identity check therefore takes NO configuration.
+    The check therefore takes NO configuration, and asks what was LOST
+    rather than what the result resembles -- a result equal to ours is a
+    valid no-op merge when the other side had nothing unique to add.
     """
     item = _item(tmp_path)
     out = tmp_path / "merged"
     out.write_bytes(item.live.read_bytes())          # exactly ours
     res = merge.validate(item, out)                   # note: no probes
     assert not res.ok
-    assert any("identical to ours" in f for f in res.failures)
+    assert any("only in theirs were dropped" in f for f in res.failures)
 
 
 def test_result_identical_to_theirs_is_rejected_without_probes(tmp_path):
@@ -134,7 +136,7 @@ def test_result_identical_to_theirs_is_rejected_without_probes(tmp_path):
     out.write_bytes(item.repo.read_bytes())          # exactly theirs
     res = merge.validate(item, out)
     assert not res.ok
-    assert any("identical to theirs" in f for f in res.failures)
+    assert any("only in ours were dropped" in f for f in res.failures)
 
 
 def test_identical_sides_do_not_trigger_the_identity_check(tmp_path):
@@ -531,3 +533,128 @@ def test_two_way_labels_reports_when_no_base_can_be_found(tmp_path):
     run("checkout", "-q", "--orphan", "flat")
     run("add", "-A"); run("commit", "-qm", "flat")
     assert merge.two_way_labels(Manifest.load(co), co, roots) == ["F.md"]
+
+
+# --------------------------------------------------------------------------
+# Install destination: found by verifying a real run, not by the suite
+# --------------------------------------------------------------------------
+
+def test_write_back_installs_into_the_checkout_not_the_staging_copy(tmp_path):
+    """REGRESSION for the 0.3.0 bug.
+
+    On the HEAD axis, `repo` is the STAGED copy of theirs inside the merge
+    workspace; the checkout's real file is a different path entirely. The old
+    write-back wrote to `repo`, so `--accept` put the merge in the live tree,
+    clobbered the staged copy of theirs, and left the payload repo untouched
+    -- while reporting success.
+
+    The previous test could not catch this: its fixture made `live` and `repo`
+    two ordinary temp files, where writing to the wrong one is indistinguish-
+    able from writing to the right one. This asserts the DESTINATION.
+    """
+    staging = tmp_path / "workspace" / "F.md.head"
+    staging.parent.mkdir(parents=True)
+    staging.write_bytes(b"theirs-content\n")
+    checkout = tmp_path / "checkout" / "dotclaude" / "F.md"
+    checkout.parent.mkdir(parents=True)
+    checkout.write_bytes(b"checkout-original\n")
+    live = tmp_path / "live" / "F.md"
+    live.parent.mkdir(parents=True)
+    live.write_bytes(b"ours-content\n")
+
+    item = merge.MergeItem(entry=_entry(), rel="", live=live,
+                           repo=staging, repo_dest=checkout)
+    merged = tmp_path / "merged"
+    merged.write_bytes(b"MERGED\n")
+    merge._write_back(item, merged)
+
+    assert checkout.read_bytes() == b"MERGED\n", "the checkout must receive it"
+    assert live.read_bytes() == b"MERGED\n", "so must the live tree"
+    assert staging.read_bytes() == b"theirs-content\n", \
+        "the staged copy of theirs must be left alone"
+
+
+def test_backup_is_written_before_either_side_is_touched(tmp_path):
+    """--accept printed 'originals backed up' while creating no directory.
+
+    Same root cause: it backed up `repo`, the staging path. Both originals
+    must be recoverable, and the backup must precede the writes.
+    """
+    staging = tmp_path / "ws" / "F.md.head"; staging.parent.mkdir(parents=True)
+    staging.write_bytes(b"theirs\n")
+    checkout = tmp_path / "co" / "F.md"; checkout.parent.mkdir(parents=True)
+    checkout.write_bytes(b"CHECKOUT-ORIGINAL\n")
+    live = tmp_path / "lv" / "F.md"; live.parent.mkdir(parents=True)
+    live.write_bytes(b"LIVE-ORIGINAL\n")
+    bdir = tmp_path / "backups"
+
+    item = merge.MergeItem(entry=_entry(), rel="", live=live,
+                           repo=staging, repo_dest=checkout)
+    merged = tmp_path / "m"; merged.write_bytes(b"MERGED\n")
+    merge._write_back(item, merged, bdir)
+
+    assert bdir.is_dir(), "the backup directory must actually be created"
+    saved = {p.name: p.read_bytes() for p in bdir.iterdir()}
+    assert b"LIVE-ORIGINAL\n" in saved.values(), "live original must be saved"
+    assert b"CHECKOUT-ORIGINAL\n" in saved.values(), \
+        "the CHECKOUT original must be saved -- not the staging copy"
+
+
+def test_reseed_only_when_the_output_pane_is_untouched(tmp_path):
+    """REGRESSION: the resume guard compared against OURS, not the seed.
+
+    Wrong in both directions. A union seed never equals ours, so every re-run
+    reported "resumed" even when nothing had been edited; and whenever an
+    edited result happened to coincide with ours, it was mistaken for a fresh
+    seed and overwritten -- destroying real work done in the diff tool.
+    """
+    merged = tmp_path / "m"
+    stamp = tmp_path / "m.seed"
+    merged.write_bytes(b"SEEDED\n")
+    stamp.write_bytes(b"SEEDED\n")
+    # untouched -> safe to re-seed
+    assert not merge._differs_bytes(merged, stamp)
+    # human edits -> must be preserved
+    merged.write_bytes(b"SEEDED\nplus my edit\n")
+    assert merge._differs_bytes(merged, stamp)
+
+
+def test_edited_result_equal_to_ours_is_still_treated_as_edited(tmp_path):
+    """The precise case the old guard destroyed: a user resolves entirely in
+    favour of their own side, so the output equals `ours` -- and the old test
+    (`merged != live`) read that as an untouched seed and re-seeded over it."""
+    item = _item(tmp_path)
+    merged = tmp_path / "m"
+    stamp = tmp_path / "m.seed"
+    stamp.write_bytes(b"UNION-SEED\n")           # what we wrote
+    merged.write_bytes(item.live.read_bytes())    # what the user chose: ours
+    assert merge._differs_bytes(merged, stamp), \
+        "differs from the seed, so it is an edit and must be kept"
+
+
+def test_difftool_registry_is_separate_from_mergetool(monkeypatch):
+    """git keeps difftool.<n>.cmd and mergetool.<n>.cmd apart, and a name may
+    exist in one and not the other. Measured here: `bc4` is difftool-only and
+    `beyondcompare4` mergetool-only -- so reusing the merge resolver for a
+    two-pane diff would miss a working tool sitting right there."""
+    calls = []
+
+    def fake_git(args, cwd=None):
+        calls.append(args)
+        if args[:2] == ["config", "--get"] and args[2].startswith("difftool."):
+            return 0, "definitely-not-real.exe $LOCAL $REMOTE"
+        return 1, ""
+    monkeypatch.setattr(merge, "_git", fake_git)
+    with pytest.raises(merge.MergeError, match="binary was not found"):
+        merge.resolve_difftool("phantom")
+    assert any(a[2].startswith("difftool.") for a in calls if len(a) > 2), \
+        "must consult the DIFFtool registry, not mergetool"
+
+
+def test_difftool_refuses_without_a_console(tmp_path, monkeypatch):
+    """Same AC-7 rule as merge: never open a GUI where nobody can close it."""
+    monkeypatch.setattr(merge, "interactive", lambda: False)
+    a = tmp_path / "a"; a.write_bytes(b"x")
+    b = tmp_path / "b"; b.write_bytes(b"y")
+    with pytest.raises(merge.MergeError, match="no console attached"):
+        merge.launch_difftool("anything", a, b)
