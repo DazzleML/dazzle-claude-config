@@ -73,6 +73,31 @@ def files_differ(a: Path, b: Path) -> bool:
     return _normalize_eol(ba) != _normalize_eol(bb)
 
 
+def line_stats(live: Path, repo: Path) -> tuple[int, int, int, int]:
+    """(only_live, changed_both, only_repo, regions) between two files.
+
+    "N files differ on both sides" answers *how many files*, which reads as
+    *how many differences* and is the first question anyone asks. This gives
+    the line-level answer so the report says what actually diverged.
+
+    EOL-normalised: on Windows the live tree is CRLF while git hands back LF,
+    and without normalising every line looks changed -- the same defect that
+    produced phantom drift, a bogus repo comparison, and an unusable merge.
+    """
+    import difflib
+    try:
+        a = _normalize_eol(live.read_bytes()).decode("utf-8", "replace").splitlines()
+        b = _normalize_eol(repo.read_bytes()).decode("utf-8", "replace").splitlines()
+    except OSError:
+        return (0, 0, 0, 0)
+    ops = [o for o in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()
+           if o[0] != "equal"]
+    only_live = sum(i2 - i1 for t, i1, i2, j1, j2 in ops if t == "delete")
+    only_repo = sum(j2 - j1 for t, i1, i2, j1, j2 in ops if t == "insert")
+    changed = sum(max(i2 - i1, j2 - j1) for t, i1, i2, j1, j2 in ops if t == "replace")
+    return (only_live, changed, only_repo, len(ops))
+
+
 @dataclass
 class EntryDiff:
     entry: Entry

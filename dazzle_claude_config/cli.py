@@ -8,14 +8,15 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import _version, render
+from . import _version, merge, render
 from .apply import ApplyConflictError, apply
 from .collect import collect
 from .gitops import CheckoutRepo, GitError, GitopsSafetyError
 from .manifest import Manifest, ManifestError
 from .platform_info import default_checkout_dir, territory_roots
 from .render import c
-from .syncmap import diff_all
+from . import userconfig
+from .syncmap import diff_all, line_stats
 
 EXIT_CLEAN, EXIT_DRIFT, EXIT_ERROR = 0, 1, 2
 
@@ -45,13 +46,29 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description="Sync Claude Code configuration across machines "
                     "(dazzle-claude-config).",
-        epilog="""getting started (a payload is an ordinary git repo -- clone it yourself):
+        epilog="""first run (a payload is an ordinary git repo -- clone it yourself):
   git clone <payload-repo> ~/claude/my-config
   ccs status --checkout-dir ~/claude/my-config   # look before you leap
   ccs apply  --checkout-dir ~/claude/my-config   # install it; originals backed up
 
   Clone into ~/claude (or anywhere), NOT into ~/.claude -- the checkout is
   not your live config. Set CCS_CHECKOUT_DIR to stop passing --checkout-dir.
+
+day to day, once it is installed:
+  ccs status                     # what drifted, and which side owns each change
+  ccs merge                      # files changed on BOTH sides -- see the warning below
+  ccs collect                    # one-sided: your live edits -> the checkout
+  ccs apply                      # one-sided: the checkout -> your live config
+  git -C <checkout> add -A && git commit && git push    # share it with your other machines
+
+  A file that changed on BOTH sides needs `ccs merge`. `collect` and `apply`
+  are ONE-WAY copies, so running either on such a file discards whatever the
+  losing side added -- silently, and with a success message. `ccs status`
+  marks those entries; `ccs merge --preview` shows you the three versions in
+  your own diff tool before you commit to anything.
+
+  Preferences (diff tool, status verbosity, AI merge command) live in
+  ~/claude/ccs-config.json; each is also a per-run flag and an env var.
 
   A public collection to try: https://github.com/DazzleML/dazzle-claude-code-config
 """)
@@ -62,12 +79,52 @@ def _build_parser() -> argparse.ArgumentParser:
 
     for verb, doc in (("collect", "copy live config INTO the checkout (guarded)"),
                       ("apply", "copy checkout config INTO the live tree (backed up)"),
+                      ("merge", "resolve files that differ on BOTH sides, in your diff tool"),
                       ("status", "three-way drift report (exit 1 when drift)"),
                       ("diff", "list per-file differences")):
         sp = sub.add_parser(verb, help=doc)
         _add_common(sp, suppress=True)
-        if verb in ("collect", "apply"):
+        if verb in ("collect", "apply", "merge"):
             sp.add_argument("--dry-run", action="store_true")
+        if verb in ("collect", "apply"):
+            sp.add_argument("--force", action="store_true",
+                            help="copy even files that changed on BOTH sides "
+                                 "(DESTRUCTIVE -- discards the losing side; "
+                                 "prefer ccs merge)")
+        if verb == "merge":
+            sp.add_argument("--tool", default=None,
+                            help="git mergetool name (default: probe for one whose "
+                                 "binary actually exists)")
+            sp.add_argument("--only", default=None,
+                            help="limit to entries whose repo path starts with this prefix")
+            sp.add_argument("--accept", action="store_true",
+                            help="install validated results into BOTH sides "
+                                 "(default: leave them in the workspace for review)")
+            sp.add_argument("--union", action="store_true",
+                            help="resolve conflicting regions by KEEPING BOTH sides "
+                                 "instead of emitting markers; right when each side "
+                                 "added different things, wrong when they edited the "
+                                 "same line (validation still runs)")
+            sp.add_argument("--base", default="auto",
+                            choices=("auto", "sibling", "none"),
+                            help="auto: use a trusted ancestor, else none. "
+                                 "sibling: use the nearest historical version even "
+                                 "though it is NOT an ancestor (pre-resolves more, "
+                                 "but invents deletions for content one side never "
+                                 "had). none: force a 2-way.")
+            sp.add_argument("--preview", action="store_true",
+                            help="open the three sides in your diff tool to LOOK "
+                                 "at them; validates nothing, installs nothing")
+            sp.add_argument("--no-launch", action="store_true",
+                            help="produce and validate the merged file without "
+                                 "opening a diff tool")
+        if verb == "status":
+            g = sp.add_mutually_exclusive_group()
+            g.add_argument("--long", action="store_true",
+                           help="always list every differing file, ignoring the "
+                                "line budget")
+            g.add_argument("--compact", action="store_true",
+                           help="one line per entry, never the per-file breakdown")
         if verb == "apply":
             sp.add_argument("--only", default=None,
                             help="limit to entries whose repo path starts with this prefix")
@@ -101,7 +158,36 @@ def _setup(args) -> tuple[Manifest, Path, dict, CheckoutRepo | None]:
     return manifest, checkout, roots, repo
 
 
-def _print_status(checkout, repo, roots, all_diffs, diffs) -> None:
+def _print_entry_files(d) -> None:
+    """Per-file breakdown, indented under its entry.
+
+    An entry is usually a DIRECTORY (skills/, commands/, ...), so "2 files
+    differ" leaves you asking *which two*. Indentation ties each file to its
+    parent entry without repeating the entry path on every line.
+    """
+    # A single-file entry (CLAUDE.md) already said everything on its own line;
+    # repeating it as a child is pure noise.
+    names = [r for r in (*d.live_only, *d.repo_only, *d.modified) if r]
+    if not names:
+        return
+    width = min(max(len(n) for n in names), 52)
+
+    for rel in sorted(d.live_only):
+        if rel:
+            print(f"      {c('yellow', 'live only')}  {rel}")
+    for rel in sorted(d.repo_only):
+        if rel:
+            print(f"      {c('cyan', 'checkout ')}  {rel}")
+    for rel in sorted(d.modified):
+        if not rel:
+            continue
+        ol, ch, orp, reg = line_stats(d.live_base / rel, d.repo_base / rel)
+        stats = (f"{ol} only live / {ch} changed / {orp} only checkout"
+                 f", {reg} region{'' if reg == 1 else 's'}")
+        print(f"      {c('magenta', 'both     ')}  {rel:<{width}}  {c('dim', stats)}")
+
+
+def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None) -> None:
     """The status report, written for someone who has not read the docs.
 
     Three legs, because that is what "in sync" actually means here:
@@ -122,10 +208,22 @@ def _print_status(checkout, repo, roots, all_diffs, diffs) -> None:
                   f" {c('dim', '-- commit and push to share with your other machines')}")
         if repo.has_conflicts():
             print(c("bold_red", "          MERGE CONFLICTS -- resolve them before `ccs apply`"))
+    # `checkout` gets a labelled path above; `live` needs the same so the two
+    # words in every difference line below are unambiguous.
+    print(f"{c('bold', 'live')}      {c('cyan', str(roots['CLAUDE_DIR']))} "
+          f"{c('dim', '(dotclaude)')}")
+    print(f"          {c('cyan', str(roots['USER_CLAUDE']))} "
+          f"{c('dim', '(userclaude)')}")
     print(f"{c('bold', 'compared')}  {render.n_files(files)} across "
-          f"{render.n_entries(len(all_diffs))} of config")
-    print(f"          {c('dim', str(roots['CLAUDE_DIR']))}")
-    print(f"          {c('dim', str(roots['USER_CLAUDE']))}")
+          f"{render.n_entries(len(all_diffs))} of live config vs the checkout")
+
+    cfg = cfg or {}
+    detail = cfg.get("status_detail", "auto")
+    budget = cfg.get("status_max_lines", 30)
+    # One line per entry, plus one per file it contains.
+    would_cost = sum(1 + len(d.live_only) + len(d.repo_only) + len(d.modified)
+                     for d in diffs)
+    long_form = detail == "long" or (detail == "auto" and would_cost <= budget)
 
     if diffs:
         print()
@@ -141,8 +239,35 @@ def _print_status(checkout, repo, roots, all_diffs, diffs) -> None:
                 bits.append(f"{len(d.repo_only)} only in the checkout")
             if d.modified:
                 n = len(d.modified)
-                bits.append(f"{n} differ{'s' if n == 1 else ''} on both sides")
+                # Most entries are DIRECTORIES (skills/, commands/, ...), so the
+                # file count matters there; for a single-file entry like
+                # CLAUDE.md it is noise that reads as a difference count.
+                single = n == 1 and d.repo_base.is_file()
+                bits.append("differs on both sides" if single
+                            else f"{render.n_files(n)} differ on both sides")
+                if n <= 25:
+                    ol = ch = orp = reg = 0
+                    for rel in d.modified:
+                        lv = d.live_base / rel if rel else d.live_base
+                        rp = d.repo_base / rel if rel else d.repo_base
+                        a, b_, c_, r = line_stats(lv, rp)
+                        ol += a; ch += b_; orp += c_; reg += r
+                    detail = (f"{c('yellow', str(ol))} lines only in live, "
+                              f"{c('magenta', str(ch))} changed on both, "
+                              f"{c('cyan', str(orp))} lines only in the checkout"
+                              f", in {reg} region{'' if reg == 1 else 's'}")
+                    bits[-1] += f" -- {detail}"
             print(f"  {c('cyan', d.entry.repo)}: {', '.join(bits)}")
+            if long_form:
+                _print_entry_files(d)
+
+    # Only explain the collapse when the BUDGET caused it. If the user asked
+    # for --compact, telling them they exceeded a budget is both wrong and
+    # faintly accusatory.
+    if diffs and not long_form and detail == "auto":
+        print(c("dim", f"  ({would_cost} lines of per-file detail suppressed -- "
+                       f"over the {budget}-line budget; use --long, or raise "
+                       "status_max_lines in ~/claude/ccs-config.json)"))
 
     denied = [(d.entry.target, rel) for d in all_diffs for rel in d.denied_live]
     if denied:
@@ -159,10 +284,24 @@ def _print_status(checkout, repo, roots, all_diffs, diffs) -> None:
               " -- your live config and the checkout match; "
               "nothing to collect, nothing to apply")
     else:
-        print(c("bold_yellow", f"status: drift in {render.n_entries(len(diffs))}") +
-              " -- run " + c("bold", "ccs diff") + " to see which files, then " +
-              c("bold", "ccs collect") + " (live -> checkout) or " +
-              c("bold", "ccs apply") + " (checkout -> live)")
+        # Both-sides drift needs `merge`. Recommending collect/apply here is
+        # not merely incomplete -- they are ONE-WAY overwrites, so following
+        # that advice discards whichever side loses. That is exactly how 50
+        # lines of CLAUDE.md went missing before this verb existed.
+        two_way = [d for d in diffs if d.modified]
+        head = c("bold_yellow", f"status: drift in {render.n_entries(len(diffs))}")
+        if two_way:
+            print(head + f" -- {render.n_entries(len(two_way))} differ on "
+                  + c("bold_red", "BOTH sides") + "; run " + c("bold", "ccs merge")
+                  + " for those " + c("dim", "(collect/apply would overwrite one side)"))
+            print("        " + c("dim", "one-sided drift is safe with ")
+                  + c("bold", "ccs collect") + c("dim", " (live -> checkout) or ")
+                  + c("bold", "ccs apply") + c("dim", " (checkout -> live)"))
+        else:
+            print(head + " -- run " + c("bold", "ccs diff")
+                  + " to see which files, then " + c("bold", "ccs collect")
+                  + " (live -> checkout) or " + c("bold", "ccs apply")
+                  + " (checkout -> live)")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -170,6 +309,27 @@ def main(argv: list[str] | None = None) -> int:
     render.init(getattr(args, "no_color", False))
     try:
         manifest, checkout, roots, repo = _setup(args)
+
+        # GUARD both one-way verbs. `collect`/`apply` copy `modified` files
+        # in the same breath as the safe one-sided ones; for a genuinely
+        # two-way file that discards the losing side and reports success.
+        if args.verb in ("collect", "apply") and not getattr(args, "force", False):
+            risky = merge.two_way_labels(manifest, checkout, roots)
+            # `collect` has no --only, so this MUST be getattr: reaching for
+            # args.only unconditionally crashed collect while apply passed,
+            # because the two verbs carry different flags.
+            only = getattr(args, "only", None)
+            if only:
+                risky = [r for r in risky if r.startswith(only.split("/")[-1])]
+            if risky:
+                print(c("bold_red", "REFUSING") + ": " +
+                      f"{render.n_files(len(risky))} changed on BOTH sides -- "
+                      f"a one-way {args.verb} would discard one side's work")
+                for r in risky:
+                    print(f"  {c('magenta', r)}")
+                print(c("dim", "  run `ccs merge` for these, or `--force` to "
+                               "overwrite anyway (destructive)"))
+                return EXIT_DRIFT
 
         if args.verb == "collect":
             r = collect(manifest, checkout, roots, repo=repo, dry_run=args.dry_run)
@@ -248,11 +408,73 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_DRIFT if (r.removals_pending or r.refused_denied) \
                 else EXIT_CLEAN
 
+        if args.verb == "merge":
+            r = merge.run(manifest, checkout, roots, tool=args.tool,
+                          dry_run=args.dry_run, accept=args.accept, only=args.only,
+                          union=args.union, launch_tool=not args.no_launch,
+                          preview=args.preview, base_mode=args.base)
+            for item in r.refused:
+                print(f"{c('yellow', 'refused')} {item.label} {c('dim', '-- ' + item.reason)}")
+            for item in r.planned:
+                print(f"{c('magenta', 'would merge')}: {item.label}")
+            for item in r.siblings:
+                sib, sha, n, ratio = item.sibling
+                used = " (USED as --base sibling)" if item.base == sib else ""
+                print(f"{c('yellow', 'nearest historical version')}: {sha}{used}")
+                print(c("dim", f"    {sib}"))
+                print(c("dim", f"    not an ancestor -- it attributes {n} purely "
+                               f"deleted line(s) to you that the other side still "
+                               f"has ({ratio:.0%}); open it to see what changed "
+                               "since, but do not merge against it blindly"))
+            for item in r.no_base:
+                print(f"{c('yellow', 'no base')} {item.label} "
+                      + c("dim", "-- 2-way hand-off; the base pane is empty"))
+            for item in r.previewed:
+                print(f"{c('cyan', 'previewed')}: {item.label} "
+                      + c("dim", "-- nothing validated, nothing installed"))
+            for item in r.resumed:
+                print(f"{c('dim', 'resumed')} {item.label} -- kept your prior edits")
+            for item in r.resolved:
+                verb = "merged and installed" if args.accept else "merged (not installed)"
+                print(f"{c('green', verb)}: {item.label}")
+            for item, v in r.unresolved:
+                print(f"{c('bold_red', 'NOT INSTALLED')} {item.label}")
+                for f in v.failures:
+                    print("    " + c("red", f))
+                # Users who did not author both sides cannot know which to
+                # keep. Offer the cheap deterministic signals first, and only
+                # then the paid one.
+                for h in merge.resolution_hints(item):
+                    print("    " + c("yellow", "hint") + " " + c("dim", h))
+                print("    " + c("dim", "still stuck? ") + c("bold", "--ai") +
+                      c("dim", " proposes a resolution you review in the same "
+                               "3-way view (set ai_merge_command in "
+                               "~/claude/ccs-config.json; a local model works "
+                               "and costs nothing)"))
+            if r.backup_dir:
+                print(c("dim", f"originals backed up: {r.backup_dir}"))
+            if r.workspace:
+                print(c("dim", f"workspace: {r.workspace}"))
+            if not (r.refused or r.planned or r.resolved or r.unresolved):
+                print(c("green", "merge: nothing to do")
+                      + " -- no file differs on both sides")
+            # Validation failure is the alarm this whole verb exists for: a
+            # tool exiting 0 is NOT evidence the merge kept both sides.
+            if r.unresolved:
+                return merge.EXIT_VALIDATION
+            return EXIT_DRIFT if r.refused else EXIT_CLEAN
+
         # status / diff
         all_diffs = diff_all(manifest, checkout, roots)
         diffs = [d for d in all_diffs if not d.clean]
         if args.verb == "status":
-            _print_status(checkout, repo, roots, all_diffs, diffs)
+            over = {}
+            if getattr(args, 'long', False):
+                over['status_detail'] = 'long'
+            elif getattr(args, 'compact', False):
+                over['status_detail'] = 'compact'
+            _print_status(checkout, repo, roots, all_diffs, diffs,
+                          userconfig.load(roots.get('USER_CLAUDE'), over))
             return EXIT_CLEAN if not diffs else EXIT_DRIFT
         else:
             for d in diffs:
@@ -275,12 +497,15 @@ def main(argv: list[str] | None = None) -> int:
                 print()
                 print(c("dim", "live-only = only in your live config (ccs collect saves it) | "
                                "repo-only = only in the checkout (ccs apply installs it) | "
-                               "modified = differs on both sides"))
+                               "modified = differs on both sides -- ccs merge, NOT collect/apply"))
             return EXIT_CLEAN if not diffs else EXIT_DRIFT
 
     except ApplyConflictError as e:
         print(f"ccs: {e}", file=sys.stderr)
         return EXIT_ERROR
+    except merge.MergeError as e:
+        print(f"ccs: {e}", file=sys.stderr)
+        return merge.EXIT_NO_TOOL if "merge tool" in str(e) else EXIT_ERROR
     except (ManifestError, GitError, GitopsSafetyError) as e:
         print(f"ccs: {e}", file=sys.stderr)
         return EXIT_ERROR

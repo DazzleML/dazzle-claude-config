@@ -4,6 +4,40 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-28
+
+### Added
+- **`ccs merge` -- reconcile files that changed on BOTH sides.** Until now ccs could copy live-to-checkout (`collect`) or checkout-to-live (`apply`), and nothing else. Both are one-way, so a file edited on two machines lost one side's work whichever verb you ran. `merge` assembles the two versions plus a common ancestor and hands them to your own diff tool through git's `mergetool` contract, so any of the ~20 tools git already knows -- Beyond Compare, vimdiff, WinMerge, Meld, KDiff3, VS Code -- works with no configuration from ccs.
+
+  Nothing is installed until the result passes validation. `--preview` opens the three versions to look at without producing or installing anything; `--union` keeps both sides where they added different things; `--accept` installs, backing up both originals first.
+
+- **Two-way divergence is now refused by `collect` and `apply`.** They previously treated a file that differed on both sides exactly like a one-sided change and copied straight over it, reporting success. Both now stop, name the files, and point at `ccs merge`; `--force` still overwrites for anyone who genuinely wants that.
+
+- **`ccs status` reports which side owns each change.** Instead of "1 differs on both sides" -- a file count that reads like a difference count -- entries now show `2 lines only in live, 6 changed on both, 50 lines only in the checkout, in 10 regions`, with a per-file breakdown indented under each entry. Verbosity is `auto` by default, collapsing past a line budget; `--long`/`--compact`, `CCS_STATUS_DETAIL`/`CCS_STATUS_MAX_LINES`, and `~/claude/ccs-config.json` all control it.
+
+- **User preferences file** at `~/claude/ccs-config.json`, covering diff tool, status verbosity, divergence policy, and the AI-merge hook. Precedence is flag, then environment variable, then file, then built-in.
+
+### Changed
+- `ccs status` labels the live roots the way it already labelled the checkout, and its footer leads with `ccs merge` when any entry differs on both sides -- previously it recommended `collect` or `apply` there, which is precisely the advice that discards work.
+- `--help` now documents the day-to-day loop, not only first-time installation.
+
+### Fixed
+- **Line endings no longer wreck the merge.** The live tree is CRLF on Windows while git returns LF, so an unnormalised comparison marked every line as changed and collapsed the merge into one ~1000-line conflict. Normalising first took a real 1014-vs-966-line divergence from 1983 lines of conflict to 65, with 93% auto-resolved. Write-back restores the file's original line-ending style.
+- **A merge base is no longer trusted just because it is the nearest commit.** When the closest historical version is a *sibling* rather than an ancestor -- it contains content one side never had -- a three-way merge reads "never had it" as "deleted it" and removes it. Measured: a coherent 10-line block silently dropped, leaving the surrounding section incoherent. ccs now rejects a candidate base when the lines it attributes to your deletions are still present verbatim on the other side, falling back to an honest two-way. `--base sibling` opts back in; the rejected version is written to the workspace either way, clearly named, so it can still be inspected.
+
+### Removed
+- `difftool.py`, an unused diff-tool registry. `git mergetool` already resolves and launches these tools, including version-suffixed entries.
+
+### Known issues
+- **`ccs merge --accept` only installs one side.** The merged result reaches the live tree correctly, but the checkout copy is written to the staging file in the merge workspace instead of the checkout's real path, so the payload repo never receives it -- and the staged "theirs" copy is overwritten in the process. `ccs status` will still report the file as divergent afterwards, which is the honest signal that the install was partial.
+- **The pre-install backup is not written.** `--accept` prints `originals backed up: ~/claude/backups/ccs-merge` but the directory is never created, for the same reason. Until this is fixed, take your own copy of both sides before using `--accept`.
+
+  Both were found by verifying a real install rather than by the test suite, which asserted `_write_back` against synthetic paths where the distinction does not exist. Fixed in 0.3.1.
+
+### Notes
+- Ctrl+C handling and the non-blocking `--preview` are **not yet verified**: both involve console signals combined with a GUI process and cannot be exercised from a non-interactive shell.
+- `ai_merge_command` is present in the config file but **not yet implemented**; `ccs merge` currently suggests it and prints deterministic resolution hints (regressed patterns, convention drift) instead.
+
 ## [0.2.3] - 2026-07-27
 
 ### Fixed
@@ -81,7 +115,7 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.3.0...HEAD
 [0.2.3]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.0...v0.2.1
