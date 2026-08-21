@@ -25,7 +25,7 @@ IMPLICIT_FILES = ["CLAUDE.md", "settings.json", "keybindings.json"]
 _IMPLICIT_MARKERS = {"CLAUDE.md", "skills", "commands", "agents", "settings.json"}
 
 _TOP_KEYS = {"manifest_version", "description", "territories", "entries",
-             "collect_exclude", "deny"}
+             "collect_exclude", "deny", "hold_additions"}
 _ENTRY_KEYS = {"repo", "territory", "target", "strategy", "overlays", "vars", "os"}
 _TERRITORY_KEYS = {"root_var", "repo_dir"}
 
@@ -53,6 +53,12 @@ class Manifest:
     collect_exclude: list[str]
     deny: list[str]
     path: Path
+    # When true, `collect` updates files the checkout already tracks but will
+    # NOT create new ones without --add. Set it on a payload that gets pushed
+    # somewhere public or shared, where an unintended new file is published
+    # rather than merely copied. Defaults false: existing private checkouts
+    # keep the additive behavior they were built around.
+    hold_additions: bool = False
 
     @classmethod
     def implicit(cls, checkout: Path) -> "Manifest":
@@ -101,7 +107,8 @@ class Manifest:
             # Nested git repos inside a mirror (a skill cloned straight into
             # skills/, etc.) are never config -- invisible to sync in both
             # directions, matching __pycache__ handling.
-            collect_exclude=["**/__pycache__/**", "**/*.pyc", "**/.git/**"],
+            collect_exclude=["**/__pycache__/**", "**/*.pyc", "**/.git/**",
+                             "**/.vscode/**", "**/.idea/**", "**/.DS_Store"],
             deny=[],
             path=checkout / MANIFEST_NAME,
         )
@@ -162,6 +169,7 @@ class Manifest:
             collect_exclude=list(data.get("collect_exclude") or []),
             deny=list(data.get("deny") or []),
             path=mpath,
+            hold_additions=bool(data.get("hold_additions") or False),
         )
 
     def copy_entries(self) -> list[Entry]:

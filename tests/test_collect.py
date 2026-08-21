@@ -1,4 +1,6 @@
 """collect: guard-stack behavior including A1 (refusals) and A8 (index check)."""
+import dataclasses
+
 from dazzle_claude_config.collect import collect
 from dazzle_claude_config.gitops import CheckoutRepo
 
@@ -28,6 +30,105 @@ def test_dry_run_copies_nothing(env):
     r = collect(manifest, checkout, roots, dry_run=True)
     assert "dotclaude/agents/newbie.md" in r.copied
     assert not (checkout / "dotclaude" / "agents" / "newbie.md").exists()
+
+
+def test_only_scopes_collect_to_one_entry(env):
+    """AC-1: --only must leave non-matching entries entirely untouched.
+
+    Without this, the only way to publish part of a payload was to publish
+    all of it -- which measured out at 13 personal files bound for a public
+    repo (DWP-7 GT-6).
+    """
+    claude, _, checkout, manifest, roots = env
+    (claude / "agents" / "newbie.md").write_text("new agent\n", encoding="utf-8")
+    (claude / "CLAUDE.md").write_text("# global memory v2\n", encoding="utf-8")
+    r = collect(manifest, checkout, roots, only="dotclaude/agents")
+    assert "dotclaude/agents/newbie.md" in r.copied
+    assert "dotclaude/CLAUDE.md" not in r.copied
+    assert not (checkout / "dotclaude" / "CLAUDE.md").read_text(
+        encoding="utf-8").startswith("# global memory v2")
+
+
+def test_only_matching_nothing_is_reported_not_silent(env):
+    """AC-2: a prefix that matches no entry must be visible, not a quiet 0.
+
+    A typo'd --only otherwise reports success having copied nothing, which
+    reads identically to 'already in sync'.
+    """
+    claude, _, checkout, manifest, roots = env
+    (claude / "agents" / "newbie.md").write_text("new agent\n", encoding="utf-8")
+    r = collect(manifest, checkout, roots, only="dotclaude/nope")
+    assert r.only_matched == 0
+    assert r.copied == []
+
+
+def test_only_none_still_processes_every_entry(env):
+    """AC-1 control: the default path must be unchanged by --only's addition."""
+    claude, _, checkout, manifest, roots = env
+    (claude / "agents" / "newbie.md").write_text("new agent\n", encoding="utf-8")
+    (claude / "CLAUDE.md").write_text("# global memory v2\n", encoding="utf-8")
+    r = collect(manifest, checkout, roots)
+    assert r.only_matched > 1
+    assert "dotclaude/agents/newbie.md" in r.copied
+    assert "dotclaude/CLAUDE.md" in r.copied
+
+
+def test_hold_additions_withholds_new_files(env):
+    """AC-4: on a payload that declares hold_additions, a new live file is NOT
+    copied and IS named.
+
+    Measured motivation (DWP-7 GT-6): an unscoped collect toward the public
+    payload would have published 13 personal files, and the only thing that
+    stopped it was an unrelated CLAUDE.md refusal.
+    """
+    claude, _, checkout, manifest, roots = env
+    strict = dataclasses.replace(manifest, hold_additions=True)
+    (claude / "agents" / "personal-thing.md").write_text("private\n", encoding="utf-8")
+    (claude / "CLAUDE.md").write_text("# global memory v2\n", encoding="utf-8")
+    r = collect(strict, checkout, roots)
+    assert "dotclaude/agents/personal-thing.md" in r.withheld_additions
+    assert "dotclaude/agents/personal-thing.md" not in r.copied
+    assert not (checkout / "dotclaude" / "agents" / "personal-thing.md").exists()
+    # a file the checkout ALREADY tracks still updates -- gating additions must
+    # not freeze the payload
+    assert "dotclaude/CLAUDE.md" in r.copied
+
+
+def test_hold_additions_add_flag_overrides(env):
+    """AC-5: --add is the escape hatch, or the gate is a wall."""
+    claude, _, checkout, manifest, roots = env
+    strict = dataclasses.replace(manifest, hold_additions=True)
+    (claude / "agents" / "wanted.md").write_text("share me\n", encoding="utf-8")
+    r = collect(strict, checkout, roots, add=True)
+    assert "dotclaude/agents/wanted.md" in r.copied
+    assert r.withheld_additions == []
+
+
+def test_hold_additions_permits_first_run_adoption(env, tmp_path):
+    """AC-6: an entry the checkout carries nothing for is adoption, not drift.
+
+    Without this, the FIRST collect against a fresh payload would withhold
+    everything and report success -- a silent no-op (DWP-4: adoption creates
+    the base).
+    """
+    claude, _, checkout, manifest, roots = env
+    strict = dataclasses.replace(manifest, hold_additions=True)
+    import shutil as _sh
+    _sh.rmtree(checkout / "dotclaude" / "agents")
+    (claude / "agents" / "first.md").write_text("first\n", encoding="utf-8")
+    r = collect(strict, checkout, roots)
+    assert "dotclaude/agents/first.md" in r.copied
+    assert "dotclaude/agents" in r.adopted_entries
+
+
+def test_hold_additions_defaults_off(env):
+    """AC-11: a manifest without hold_additions behaves exactly as before.
+
+    Both live payload repos predate this field; a default of True would have
+    silently frozen them.
+    """
+    _, _, _, manifest, _ = env
+    assert manifest.hold_additions is False
 
 
 def test_a1_planted_secret_refused(env):

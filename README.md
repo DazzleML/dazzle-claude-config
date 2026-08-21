@@ -18,7 +18,7 @@ Then you get a laptop. Or a work box. Or you reinstall. So you copy the folder b
 **ccs** treats your configuration as a git repository -- a *payload* -- and moves files between that repo's checkout and your live `~/.claude`. `collect` copies a live config in, refusing credentials rather than trusting you to notice them. `apply` copies config back out, backing up every file it overwrites. When a file changed on *both* machines, neither direction is safe -- so `merge` opens your own diff tool (Beyond Compare, vimdiff, WinMerge, whatever git already knows) with both versions and a common ancestor, and installs nothing until the result is checked for content that went missing. Because a payload is just a repo, it can be yours, someone else's, or a fork of theirs.
 
 > [!NOTE]
-> **Alpha software (v0.3.1) -- working, in daily use, surfaces not frozen.** It manages my own configs across machines. The core loop (`collect` / `apply` / `merge` / `status` / `diff`, deny-list + credential scanning, backups, staged removals) are functional; the Phase 2 set (templated settings rendering, declarative plugin installs, and one-command `ccs bootstrap` onboarding) is still a WIP, and command surfaces may change between versions until it does. `merge` resolves against a common ancestor when one can be trusted and says so plainly when it cannot; AI-assisted resolution is stubbed but not yet implemented. Please [file issues](https://github.com/DazzleML/dazzle-claude-config/issues) for anything rough. And, as with any sync tool, keep an independent copy of anything irreplaceable.
+> **Alpha software (v0.4.0) -- working, in daily use, surfaces not frozen.** It manages my own configs across machines. The core loop (`collect` / `apply` / `merge` / `status` / `diff`, deny-list + credential scanning, backups, staged removals, selective sync) are functional; the Phase 2 set (templated settings rendering, declarative plugin installs, and one-command `ccs bootstrap` onboarding) is still a WIP, and command surfaces may change between versions until it does. `merge` resolves against a common ancestor when one can be trusted and says so plainly when it cannot; AI-assisted resolution is stubbed but not yet implemented. Please [file issues](https://github.com/DazzleML/dazzle-claude-config/issues) for anything rough. And, as with any sync tool, keep an independent copy of anything irreplaceable.
 
 Part of the DazzleML Claude toolchain: [session-logger](https://github.com/DazzleML/claude-session-logger) records, [claude-session-backup](https://github.com/DazzleML/Claude-Session-Backup) preserves, **ccs distributes**.
 
@@ -59,11 +59,18 @@ ccs apply  --checkout-dir ~/claude/my-config
 Then, day to day:
 
 ```bash
-ccs status     # three-way drift report (live vs checkout vs remote); exit 1 = drift
-ccs diff       # per-file details
-ccs collect    # live config INTO the checkout (credentials refused + reported)
-ccs apply      # checkout config INTO the live tree (originals backed up first)
+git -C <checkout> pull        # what your other machines sent
+ccs status                    # what differs, and which side owns each change
+ccs merge                     # files that changed on BOTH sides -- your diff tool decides
+ccs apply                     # the rest: checkout INTO the live tree (originals backed up)
+#   ... work ...
+ccs collect                   # live config INTO the checkout (credentials refused)
+git -C <checkout> commit -am "config: ..." && git push
 ```
+
+`apply` and `collect` are one-way copies, so they **refuse** a file that changed on both sides rather than picking a winner -- that is what `merge` is for. Steps 1 and 6 are plain git; ccs does not wrap them.
+
+**[The full loop, step by step, with what each step guarantees →](docs/sync-loop.md)**
 
 ## Usage
 
@@ -84,7 +91,22 @@ status: clean -- your live config and the checkout match; nothing to collect, no
 
 Output is colorized on a TTY (and plain when piped, or with `--no-color` / `NO_COLOR`).
 
-`collect` and `apply` support `--dry-run`. `apply` supports `--only <prefix>` and `--sync-removals` (staged to the backup dir -- nothing is ever deleted in place). Options work before or after the verb.
+`collect` and `apply` both support `--dry-run` and `--only <prefix>`; `apply` also has `--sync-removals` (staged to the backup dir -- nothing is ever deleted in place). Options work before or after the verb.
+
+### Sending part of a config, and not sending the rest
+
+`--only` scopes a run to one slice, which matters most when the checkout is a repo you *publish*. There a `collect` does not merely copy a file, it stages it for the world, and the risk is not the file you meant to send but the one you forgot you had.
+
+Two settings in `ccs-manifest.json` cover that, and they do different jobs:
+
+```jsonc
+"collect_exclude": ["commands/t-*.md"],  // never syncs, either direction
+"hold_additions": true                   // update tracked files; do not add new ones
+```
+
+`collect_exclude` names content you already know must stay out. `hold_additions` guards the file you *haven't* thought of: with it set, `collect` updates what the checkout already tracks but will not create anything new without `--add`, and it names everything it held back. An exclusion list is a promise someone has to keep current; this is not.
+
+It defaults to off, so a private payload you sync with yourself behaves as it always has. The first `collect` against an entry the checkout carries nothing for is treated as adoption and its files are added regardless -- otherwise a first run would be a silent no-op.
 
 ## Where things live
 

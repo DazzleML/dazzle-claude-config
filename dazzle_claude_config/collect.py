@@ -28,6 +28,9 @@ class CollectResult:
     denied_live: list[str] = field(default_factory=list)   # deny-matched, never sync
     failed: list[tuple[str, str]] = field(default_factory=list)  # (path, reason)
     mismatched: list[str] = field(default_factory=list)    # type-conflict entries
+    only_matched: int = 0                                  # entries passing --only
+    withheld_additions: list[str] = field(default_factory=list)  # new paths, needs --add
+    adopted_entries: list[str] = field(default_factory=list)     # first-run entries
 
     @property
     def refusals(self) -> int:
@@ -35,11 +38,15 @@ class CollectResult:
 
 
 def collect(manifest: Manifest, checkout: Path, roots: dict[str, Path],
-            repo: CheckoutRepo | None = None, dry_run: bool = False) -> CollectResult:
+            repo: CheckoutRepo | None = None, dry_run: bool = False,
+            only: str | None = None, add: bool = False) -> CollectResult:
     result = CollectResult()
     copied_repo_rels: list[str] = []
 
     for d in diff_all(manifest, checkout, roots):
+        if only and not d.entry.repo.startswith(only):
+            continue
+        result.only_matched += 1
         if d.mismatch:
             result.mismatched.append(f"{d.entry.repo}: {d.mismatch}")
             continue
@@ -47,7 +54,34 @@ def collect(manifest: Manifest, checkout: Path, roots: dict[str, Path],
         result.denied_live.extend(f"{d.entry.target}/{r}" for r in d.denied_live)
         result.missing_live.extend(f"{d.entry.repo}/{r}" if r else d.entry.repo
                                    for r in d.repo_only)
-        for rel in d.live_only + d.modified:
+
+        # Additive gating (DWP-7). Creating a NEW path in the checkout is the
+        # step that becomes publication once someone runs `git push`; updating
+        # a path the checkout already tracks is routine. ccs cannot see the
+        # push, so it guards what gets staged instead.
+        #
+        # BUT the risk belongs to the PAYLOAD, not the verb: a private
+        # single-user repo wants new files picked up silently, which is what
+        # collect has always done and what most of the suite specifies. Only a
+        # payload that knows it is published (a public collection, a shared
+        # team repo) needs additions held back. So the policy is declared in
+        # ccs-manifest.json and defaults to permissive -- existing checkouts
+        # behave exactly as before.
+        #
+        # Adoption exemption: an entry the checkout tracks nothing for is a
+        # first run (DWP-4 -- adoption CREATES the base), where every file is
+        # necessarily an addition and refusing them all would make the first
+        # collect a silent no-op.
+        additions = list(d.live_only)
+        if additions and manifest.hold_additions and not add:
+            if d.repo_tracked:
+                result.withheld_additions.extend(
+                    f"{d.entry.repo}/{r}" if r else d.entry.repo for r in additions)
+                additions = []
+            else:
+                result.adopted_entries.append(d.entry.repo)
+
+        for rel in additions + d.modified:
             src = d.live_base / rel if rel else d.live_base
             display = f"{d.entry.repo}/{rel}" if rel else d.entry.repo
 

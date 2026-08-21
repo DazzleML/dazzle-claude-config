@@ -92,6 +92,13 @@ day to day, once it is installed:
                             help="copy even files that changed on BOTH sides "
                                  "(DESTRUCTIVE -- discards the losing side; "
                                  "prefer ccs merge)")
+        if verb == "collect":
+            sp.add_argument("--only", default=None,
+                            help="limit to entries whose repo path starts with this prefix")
+            sp.add_argument("--add", action="store_true",
+                            help="also copy files the checkout does not have yet "
+                                 "(default: update tracked files only, so a collect "
+                                 "never publishes something you did not ask for)")
         if verb == "merge":
             sp.add_argument("--tool", default=None,
                             help="git mergetool name (default: probe for one whose "
@@ -398,9 +405,9 @@ def main(argv: list[str] | None = None) -> int:
         # two-way file that discards the losing side and reports success.
         if args.verb in ("collect", "apply") and not getattr(args, "force", False):
             risky = merge.two_way_labels(manifest, checkout, roots)
-            # `collect` has no --only, so this MUST be getattr: reaching for
-            # args.only unconditionally crashed collect while apply passed,
-            # because the two verbs carry different flags.
+            # Both verbs carry --only since 0.4.0; getattr stays as armor
+            # against the original 0.3.x bug, where reaching for args.only
+            # unconditionally crashed collect while apply passed.
             only = getattr(args, "only", None)
             if only:
                 risky = [r for r in risky if r.startswith(only.split("/")[-1])]
@@ -415,7 +422,8 @@ def main(argv: list[str] | None = None) -> int:
                 return EXIT_DRIFT
 
         if args.verb == "collect":
-            r = collect(manifest, checkout, roots, repo=repo, dry_run=args.dry_run)
+            r = collect(manifest, checkout, roots, repo=repo, dry_run=args.dry_run,
+                        only=args.only, add=args.add)
             for rel, pattern in r.refused_denied:
                 print(f"{c('magenta', 'protected')} {rel} "
                       f"{c('dim', f'-- matches deny rule {pattern!r}, stays local')}")
@@ -442,6 +450,22 @@ def main(argv: list[str] | None = None) -> int:
                 print(c("bold_red", "ERROR") + f": {m} -- entry skipped, fix the live tree")
             if r.git_ignored or r.failed or r.mismatched:
                 return EXIT_ERROR
+            if args.only and r.only_matched == 0:
+                print(c("yellow", f"warning: --only {args.only!r} matched no manifest entries"))
+            for rel in r.adopted_entries:
+                print(c("cyan", "ADOPTING") +
+                      f": {rel} -- the checkout carried nothing here, so its files "
+                      "are being added")
+            if r.withheld_additions:
+                n = len(r.withheld_additions)
+                print(c("yellow", "WITHHELD") +
+                      f": {n} file{'s' if n != 1 else ''} the checkout does not have yet "
+                      "-- NOT copied")
+                for rel in r.withheld_additions:
+                    print(f"    {rel}")
+                print(c("dim", "    these would be NEW in the payload; pass --add to "
+                               "include them, or exclude them for good in "
+                               "ccs-manifest.json's collect_exclude"))
             if not r.copied and not r.refusals:
                 print(c("green", "collect: nothing to do") +
                       " -- the checkout already has everything from your live config")

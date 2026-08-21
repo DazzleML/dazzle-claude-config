@@ -110,6 +110,11 @@ class EntryDiff:
     denied_live: list[str] = field(default_factory=list)  # deny-matched, never sync
     mismatch: str | None = None  # file-vs-directory type conflict; entry skipped
     total: int = 0  # files examined on either side (for "N files compared")
+    # Files the CHECKOUT already holds for this entry. Zero means the checkout
+    # has never carried this entry, which is adoption rather than drift -- the
+    # distinction additive gating needs (DWP-7), and NOT derivable from the
+    # lists above, since files identical on both sides appear in none of them.
+    repo_tracked: int = 0
 
     @property
     def clean(self) -> bool:
@@ -151,6 +156,7 @@ def diff_entry(entry: Entry, checkout: Path, roots: dict[str, Path],
     if repo_base.is_file() or (not repo_base.exists() and live_base.is_file()):
         live_exists, repo_exists = live_base.is_file(), repo_base.is_file()
         d.total = 1 if (live_exists or repo_exists) else 0
+        d.repo_tracked = 1 if repo_exists else 0
         if live_exists and not repo_exists:
             d.live_only.append("")
         elif repo_exists and not live_exists:
@@ -162,6 +168,7 @@ def diff_entry(entry: Entry, checkout: Path, roots: dict[str, Path],
     live_files = set(iter_files(live_base))
     repo_files = set(iter_files(repo_base))
     d.total = len(live_files | repo_files)
+    d.repo_tracked = len(repo_files)
 
     for rel in sorted(live_files):
         full_rel = f"{entry.target}/{rel}" if rel else entry.target

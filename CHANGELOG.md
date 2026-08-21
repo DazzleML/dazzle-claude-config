@@ -4,6 +4,21 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-31
+
+Selective sync. `collect` could copy a whole payload or nothing, which is fine for a private repo you sync with yourself and wrong for one you publish. Measured on a real public collection: an ordinary `ccs collect` would have copied thirteen personal files -- task-manager commands and two machine-specific agents -- into a repo bound for GitHub, and the only thing that stopped it was an unrelated refusal about a different file.
+
+### Added
+- **`ccs collect --only <prefix>`**, matching `apply` and `merge`, which had it already. Limits a collect to entries whose repo path starts with the prefix, so you can send one part of your config without sending the rest. A prefix matching nothing now says so, instead of reporting a successful copy of zero files.
+- **`hold_additions` in `ccs-manifest.json`.** When set, `collect` updates files the checkout already tracks but will not create new ones without `--add`, and names each file it held back along with how to include it or exclude it for good. Meant for a payload pushed somewhere public or shared, where an unintended new file is *published* rather than merely copied. Defaults to off, so existing checkouts behave exactly as before.
+- **`ccs collect --add`**, the escape hatch for the above.
+- **Editor and OS clutter excluded by default** -- `.vscode/`, `.idea/`, `.DS_Store` join `__pycache__` and `*.pyc`. Found by running a real collect, which turned up a `.vscode/settings.json` nested inside a skill directory and headed for a public repo.
+
+### Notes
+- The first `collect` against an entry the checkout carries nothing for is treated as adoption, and its files are added even under `hold_additions` -- refusing them would make the first run a silent no-op.
+- Exclusion patterns match paths relative to an entry's *target*, and also a bare filename or any directory segment.
+- Publication safety is a property of the payload, not of the verb: the private repo you sync with yourself wants new files picked up silently, and the public one does not. That is why the setting lives in the manifest rather than being a global default.
+
 ## [0.3.1] - 2026-07-28
 
 Fixes both issues 0.3.0 shipped as known, plus five more found by running the tool against a real config rather than a fixture. Every one was the same defect wearing a different costume -- a comparison made against the wrong reference -- which is written up in the reference-model analysis noted at the end.
@@ -139,7 +154,10 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.0...v0.2.1
