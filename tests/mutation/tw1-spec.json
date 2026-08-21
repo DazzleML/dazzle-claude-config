@@ -1,0 +1,95 @@
+{
+  "mutations": [
+    {
+      "id": "m1",
+      "file": "dazzle_claude_config/merge.py",
+      "original": "if entry.territory is None or entry.target is None:",
+      "mutated": "if entry.territory is None and entry.target is None:",
+      "note": "or->and on the partial-entry skip"
+    },
+    {
+      "id": "m2",
+      "file": "dazzle_claude_config/merge.py",
+      "original": "        if d.mismatch or d.live_base.is_file():\r\n            continue                      # single-file shapes handled above",
+      "mutated": "        if d.mismatch:\r\n            continue                      # single-file shapes handled above",
+      "note": "single-file entries enter the directory axis too (double-count)"
+    },
+    {
+      "id": "m3",
+      "file": "dazzle_claude_config/merge.py",
+      "original": "            live = d.live_base / rel\r\n            if live.is_file():\r\n                yield d.entry, rel, live",
+      "mutated": "            live = d.live_base / rel\r\n            yield d.entry, rel, live",
+      "note": "drops is_file guard on directory members"
+    },
+    {
+      "id": "m4",
+      "file": "dazzle_claude_config/merge.py",
+      "original": "if rc != 0 or stage is None:",
+      "mutated": "if rc == 0 or stage is None:",
+      "note": "inverts git-repo check; HEAD axis never produces items"
+    },
+    {
+      "id": "m5",
+      "file": "dazzle_claude_config/merge.py",
+      "original": "        if _normalize_eol(p.stdout) == _normalize_eol(live.read_bytes()):\r\n            continue",
+      "mutated": "        if p.stdout == live.read_bytes():\r\n            continue",
+      "note": "drops EOL normalization from HEAD equality skip"
+    },
+    {
+      "id": "m6",
+      "file": "dazzle_claude_config/merge.py",
+      "original": "        found = infer_base(checkout, repo_path, live.read_bytes(), p.stdout,\r\n                           rejected=rej)",
+      "mutated": "        found = infer_base(checkout, repo_path, p.stdout, live.read_bytes(),\r\n                           rejected=rej)",
+      "note": "swaps ours/theirs into base inference"
+    },
+    {
+      "id": "m7",
+      "file": "dazzle_claude_config/merge.py",
+      "original": "if entry.strategy in MERGE_REFUSED_STRATEGIES:",
+      "mutated": "if entry.strategy not in MERGE_REFUSED_STRATEGIES:",
+      "note": "inverts the render/plugins refusal"
+    },
+    {
+      "id": "m8",
+      "file": "dazzle_claude_config/merge.py",
+      "original": "item.repo_dest = checkout / repo_path  # where it actually installs",
+      "mutated": "item.repo_dest = checkout / entry.repo  # where it actually installs",
+      "note": "directory members install to entry root"
+    },
+    {
+      "id": "m9",
+      "file": "dazzle_claude_config/merge.py",
+      "original": "            if not live.is_file():\r\n                continue",
+      "mutated": "            if live.is_file():\r\n                continue",
+      "note": "flips existence guard; two_way_labels reports nothing"
+    },
+    {
+      "id": "m10",
+      "file": "dazzle_claude_config/merge.py",
+      "original": "ours, theirs = _normalize_eol(live.read_bytes()), _normalize_eol(p_.stdout)",
+      "mutated": "ours, theirs = live.read_bytes(), _normalize_eol(p_.stdout)",
+      "note": "drops EOL normalization on the live side of the guard"
+    },
+    {
+      "id": "m11",
+      "file": "dazzle_claude_config/merge.py",
+      "original": "            if found is None:\r\n                out.append(label)             # no base -> cannot prove it is safe\r\n                continue",
+      "mutated": "            if found is None:\r\n                continue",
+      "note": "no-base files silently treated as safe"
+    },
+    {
+      "id": "m12",
+      "file": "dazzle_claude_config/merge.py",
+      "original": "if base != ours and base != theirs:   # each side moved away from the base",
+      "mutated": "if base != ours or base != theirs:   # each side moved away from the base",
+      "note": "and->or over-reports one-sided edits as two-way"
+    }
+  ],
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/test_merge.py"
+  ]
+}

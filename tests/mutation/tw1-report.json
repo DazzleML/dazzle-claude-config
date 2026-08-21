@@ -1,0 +1,122 @@
+{
+  "harness": {
+    "name": "mutation_sweep.py",
+    "version": "0.1.0"
+  },
+  "environment": {
+    "python": "3.13.2",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "root": ".",
+    "test_command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/test_merge.py"
+    ],
+    "timestamp": "2026-08-21T04:45:18-04:00"
+  },
+  "results": [
+    {
+      "id": "m1",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "or->and on the partial-entry skip",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "m2",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "single-file entries enter the directory axis too (double-count)",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "m3",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "drops is_file guard on directory members",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "m4",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "inverts git-repo check; HEAD axis never produces items",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "m5",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "drops EOL normalization from HEAD equality skip",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "m6",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "swaps ours/theirs into base inference",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "m7",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "inverts the render/plugins refusal",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "m8",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "directory members install to entry root",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "m9",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "flips existence guard; two_way_labels reports nothing",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "m10",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "drops EOL normalization on the live side of the guard",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "m11",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "no-base files silently treated as safe",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "m12",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "and->or over-reports one-sided edits as two-way",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    }
+  ],
+  "summary": {
+    "survived": 8,
+    "killed": 4
+  },
+  "anomalies": []
+}

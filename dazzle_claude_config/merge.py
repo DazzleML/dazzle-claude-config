@@ -155,10 +155,37 @@ def plan(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
     return items
 
 
+def _head_candidates(manifest: Manifest, checkout: Path, roots: dict[str, Path]):
+    """(entry, rel, live) tuples the HEAD axis must consider.
+
+    Single-file entries yield themselves (rel "", any strategy -- the
+    render/plugins refusals are produced downstream and must stay visible).
+    Directory-target entries yield one tuple per file in diff_all's `modified`
+    list. Until 0.4.x this axis checked is_file() on the entry target and
+    silently skipped every directory entry, so neither the two-way guard nor
+    base inference ever ran for the dominant real payload shape (TW1,
+    checklist runs 03/04).
+    """
+    for entry in manifest.entries:
+        if entry.territory is None or entry.target is None:
+            continue
+        live = roots[manifest.territories[entry.territory]["root_var"]] / entry.target
+        if live.is_file():
+            yield entry, "", live
+    for d in diff_all(manifest, checkout, roots):
+        if d.mismatch or d.live_base.is_file():
+            continue                      # single-file shapes handled above
+        for rel in d.modified:
+            live = d.live_base / rel
+            if live.is_file():
+                yield d.entry, rel, live
+
+
 def _head_items(manifest: Manifest, checkout: Path, roots: dict[str, Path],
                 already: list[MergeItem], stage: Path | None,
                 base_mode: str = "auto") -> list[MergeItem]:
-    """Single-file entries whose live content differs from the COMMITTED blob.
+    """Files whose live content differs from the COMMITTED blob -- single-file
+    entries and directory-entry members alike (see _head_candidates).
 
     Materialises HEAD's version into the stage dir so the rest of the pipeline
     sees three ordinary files and needs no git awareness.
@@ -168,28 +195,25 @@ def _head_items(manifest: Manifest, checkout: Path, roots: dict[str, Path],
         return []
     seen = {i.label for i in already}
     out: list[MergeItem] = []
-    for entry in manifest.entries:
-        if entry.territory is None or entry.target is None:
-            continue
-        live = roots[manifest.territories[entry.territory]["root_var"]] / entry.target
-        if not live.is_file():
-            continue
-        p = subprocess.run(["git", "show", f"HEAD:{entry.repo}"],
+    for entry, rel, live in _head_candidates(manifest, checkout, roots):
+        repo_path = f"{entry.repo}/{rel}" if rel else entry.repo
+        p = subprocess.run(["git", "show", f"HEAD:{repo_path}"],
                            cwd=str(checkout), capture_output=True)
         if p.returncode != 0 or not p.stdout:
             continue
         if _normalize_eol(p.stdout) == _normalize_eol(live.read_bytes()):
             continue
-        item = MergeItem(entry=entry, rel="", live=live, repo=Path(), base=None)
+        item = MergeItem(entry=entry, rel=rel, live=live, repo=Path(), base=None)
         if item.label in seen:
             continue
+        seen.add(item.label)
         stage.mkdir(parents=True, exist_ok=True)
         theirs = stage / (item.label.replace("/", "__").replace("\\", "__") + ".head")
         theirs.write_bytes(p.stdout)
         item.repo = theirs                     # content of theirs (staged)
-        item.repo_dest = checkout / entry.repo  # where it actually installs
+        item.repo_dest = checkout / repo_path  # where it actually installs
         rej: list = []
-        found = infer_base(checkout, entry.repo, live.read_bytes(), p.stdout,
+        found = infer_base(checkout, repo_path, live.read_bytes(), p.stdout,
                            rejected=rej)
         if found is not None:
             blob, sha = found
@@ -775,39 +799,49 @@ def two_way_labels(manifest: Manifest, checkout: Path,
     Detection needs the base, because two states cannot distinguish "they
     added" from "we deleted". A file with no recoverable base is reported too:
     unknown is not the same as safe.
+
+    Coverage is PER-FILE via diff_all, so directory-target entries (skills/,
+    commands/ -- the dominant real payload shape) are protected the same as
+    single-file entries. Until 0.4.x this guard checked is_file() on the entry
+    target and silently skipped every directory entry (TW1, checklist run-03:
+    a real collect overwrote a committed diverged edit and exited 0).
+
+    Seed-if-absent entries are deliberately NOT guarded: `collect` never
+    touches them (diff_all covers copy entries only) and `apply` never
+    overwrites an existing live file for them, so neither one-way verb can
+    destroy a diverged seed -- refusing the whole run over one was pure
+    over-refusal. `ccs merge` still offers them via the HEAD axis.
+
+    RESOLVED files never appear here: diff_all's `modified` list is built with
+    files_differ, which is EOL-normalized, so a file whose live copy matches
+    the checkout's WORKING TREE (a finished merge; HEAD moves only on commit)
+    is filtered before this function sees it.
     """
     out: list[str] = []
-    for entry in manifest.entries:
-        if entry.territory is None or entry.target is None:
+    for d in diff_all(manifest, checkout, roots):
+        if d.mismatch:
             continue
-        if entry.strategy not in MERGEABLE_STRATEGIES:
-            continue
-        live = roots[manifest.territories[entry.territory]["root_var"]] / entry.target
-        if not live.is_file():
-            continue
-        # RESOLVED means live matches the checkout's WORKING TREE, not its
-        # HEAD. A merge installs into the working tree; HEAD does not move
-        # until you commit. Testing against HEAD kept reporting a finished
-        # merge as unresolved and refused `apply` indefinitely -- there is
-        # nothing for a one-way copy to destroy when the two sides agree.
-        worktree = checkout / entry.repo
-        if worktree.is_file() and _normalize_eol(worktree.read_bytes()) == \
-                _normalize_eol(live.read_bytes()):
-            continue
-        p_ = subprocess.run(["git", "show", f"HEAD:{entry.repo}"],
-                            cwd=str(checkout), capture_output=True)
-        if p_.returncode != 0 or not p_.stdout:
-            continue
-        ours, theirs = _normalize_eol(live.read_bytes()), _normalize_eol(p_.stdout)
-        if ours == theirs:
-            continue
-        found = infer_base(checkout, entry.repo, ours, theirs)
-        if found is None:
-            out.append(entry.target)          # no base -> cannot prove it is safe
-            continue
-        base = _normalize_eol(found[0])
-        if base != ours and base != theirs:   # each side moved away from the base
-            out.append(entry.target)
+        entry = d.entry
+        for rel in d.modified:
+            live = d.live_base / rel if rel else d.live_base
+            if not live.is_file():
+                continue
+            repo_path = f"{entry.repo}/{rel}" if rel else entry.repo
+            p_ = subprocess.run(["git", "show", f"HEAD:{repo_path}"],
+                                cwd=str(checkout), capture_output=True)
+            if p_.returncode != 0 or not p_.stdout:
+                continue
+            ours, theirs = _normalize_eol(live.read_bytes()), _normalize_eol(p_.stdout)
+            if ours == theirs:
+                continue
+            found = infer_base(checkout, repo_path, ours, theirs)
+            label = f"{entry.target}/{rel}" if rel else entry.target
+            if found is None:
+                out.append(label)             # no base -> cannot prove it is safe
+                continue
+            base = _normalize_eol(found[0])
+            if base != ours and base != theirs:   # each side moved away from the base
+                out.append(label)
     return out
 
 

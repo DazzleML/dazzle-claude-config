@@ -4,6 +4,14 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+### Fixed
+- **The two-way refusal now protects files inside directory entries** -- which is nearly every file in a real payload. Since it shipped, the guard checked whether each manifest entry's target was a single file and silently skipped every directory-shaped entry (`skills/`, `commands/`), so only single-file entries like a top-level `CLAUDE.md` were ever protected: a `collect` or `apply` could overwrite a genuinely diverged file inside `skills/` and report success. Found by a checklist step written to test message ordering; reproduced on a real payload. Refusals now name the individual files at risk.
+- **Merges of files inside directory entries now get a real ancestor.** The same skip lived in merge's history-aware path, so those files always merged as baseless two-ways even when a perfectly good common ancestor sat in the checkout's history.
+- **A diverged seed file no longer blocks the whole run.** Seed-if-absent entries can't be damaged by either one-way verb -- `collect` never touches them and `apply` never overwrites an existing live file for them -- so refusing everything over one was pure over-refusal, and on a real payload it masked every other report in the run. `ccs merge` still offers them.
+
+### Known, temporary
+- Until the companion base-inference fix lands (in progress on another machine), files whose live copy simply *hasn't changed* since an older commit are refused as if both sides had moved -- loudly, per-file, with `ccs merge` suggested. Loud false refusal replaced silent data loss on purpose; the companion fix dissolves it.
+
 ## [0.4.0] - 2026-07-31
 
 Selective sync. `collect` could copy a whole payload or nothing, which is fine for a private repo you sync with yourself and wrong for one you publish. Measured on a real public collection: an ordinary `ccs collect` would have copied thirteen personal files -- task-manager commands and two machine-specific agents -- into a repo bound for GitHub, and the only thing that stopped it was an unrelated refusal about a different file.

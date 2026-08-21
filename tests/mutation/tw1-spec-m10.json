@@ -1,0 +1,18 @@
+{
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/test_merge.py"
+  ],
+  "mutations": [
+    {
+      "id": "m10",
+      "file": "dazzle_claude_config/merge.py",
+      "original": "ours, theirs = _normalize_eol(live.read_bytes()), _normalize_eol(p_.stdout)",
+      "mutated": "ours, theirs = live.read_bytes(), _normalize_eol(p_.stdout)",
+      "note": "drops EOL normalization on the live side of the guard"
+    }
+  ]
+}

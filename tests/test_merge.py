@@ -535,6 +535,268 @@ def test_two_way_labels_reports_when_no_base_can_be_found(tmp_path):
     assert merge.two_way_labels(Manifest.load(co), co, roots) == ["F.md"]
 
 
+def _two_way_dir_repo(tmp_path):
+    """Same divergence shape as _two_way_repo, but inside a DIRECTORY entry.
+
+    This is run-03's minimal fixture: it differs from the three tests above by
+    exactly one property -- the manifest entry targets `skills/` rather than a
+    single file -- and that one property was enough for the guard to skip the
+    file entirely while a real collect destroyed its diverged edit (TW1).
+    """
+    import subprocess as sp
+    from conftest import GIT_ID
+    co = tmp_path / "checkout"; (co / "dotclaude" / "skills").mkdir(parents=True)
+    live = tmp_path / "live"; (live / "skills").mkdir(parents=True)
+
+    def run(*a):
+        r = sp.run(["git", *GIT_ID, "-C", str(co), *a], capture_output=True, text=True)
+        assert r.returncode == 0, f"git {a}: {r.stderr}"
+        return r
+
+    sp.run(["git", "init", "-q", str(co)], capture_output=True)
+    (co / "ccs-manifest.json").write_text(
+        '{"manifest_version":1,'
+        '"territories":{"dotclaude":{"root_var":"CLAUDE_DIR","repo_dir":"dotclaude"}},'
+        '"entries":[{"repo":"dotclaude/skills","territory":"dotclaude",'
+        '"target":"skills","strategy":"copy"}]}', encoding="utf-8")
+    base = "shared\ncommon\n"
+    (co / "dotclaude/skills/alpha.md").write_bytes(base.encode())
+    run("add", "-A"); run("commit", "-qm", "base")
+    (co / "dotclaude/skills/alpha.md").write_bytes((base + "THEIRS\n").encode())
+    run("add", "-A"); run("commit", "-qm", "theirs adds")
+    (live / "skills/alpha.md").write_bytes((base + "OURS\n").encode())
+    return co, {"CLAUDE_DIR": live, "USER_CLAUDE": tmp_path / "uc"}, run
+
+
+def test_two_way_labels_covers_directory_entries(tmp_path):
+    """TW1 regression (checklist run-03, Finding 1, HIGH).
+
+    The guard iterated entries and tested is_file() on the entry TARGET, so a
+    directory entry was skipped wholesale and a real `ccs collect` silently
+    overwrote a committed, diverged payload edit while exiting 0. The label is
+    per-file so the refusal names what is actually at risk.
+    """
+    from dazzle_claude_config.manifest import Manifest
+    co, roots, _run = _two_way_dir_repo(tmp_path)
+    assert merge.two_way_labels(Manifest.load(co), co, roots) == ["skills/alpha.md"]
+
+
+def test_two_way_labels_dir_entry_resolved_worktree_not_labeled(tmp_path):
+    """A finished merge (live == checkout WORKING TREE) must not be re-flagged
+    -- for directory members exactly as for single files. diff_all's modified
+    list is EOL-normalized, so the resolved file never reaches the guard."""
+    from dazzle_claude_config.manifest import Manifest
+    co, roots, _run = _two_way_dir_repo(tmp_path)
+    (roots["CLAUDE_DIR"] / "skills/alpha.md").write_bytes(
+        (co / "dotclaude/skills/alpha.md").read_bytes())
+    assert merge.two_way_labels(Manifest.load(co), co, roots) == []
+
+
+# HANDSHAKE with plzwork's S1 commit: that commit deletes the @S1_INTERLOCK
+# decorator line below -- a one-line edit -- in the SAME commit that fixes
+# infer_base's equality skip. strict=True means the suite goes red on the
+# unexpected pass, so the marker cannot be forgotten between the two commits.
+# See dwp8 + the s1-phantom-asymmetry note (both in private/claude).
+S1_INTERLOCK = pytest.mark.xfail(strict=True, reason=(
+    "until S1 (plzwork): infer_base skips any historical candidate equal to "
+    "either side, so one-sided drift yields base=None and gets labeled"))
+
+
+@S1_INTERLOCK
+def test_two_way_labels_dir_entry_one_sided_live_unchanged(tmp_path):
+    """Live equals the BASE commit verbatim -- only the checkout moved. That is
+    one-sided drift and must not be refused; a plain apply is the right call
+    (measured on a real machine as 22 files sent to 22 empty merges)."""
+    from dazzle_claude_config.manifest import Manifest
+    co, roots, _run = _two_way_dir_repo(tmp_path)
+    (roots["CLAUDE_DIR"] / "skills/alpha.md").write_bytes(b"shared\ncommon\n")
+    assert merge.two_way_labels(Manifest.load(co), co, roots) == []
+
+
+def test_two_way_labels_ignores_diverged_seed_entries(tmp_path):
+    """Seed-if-absent entries cannot be damaged by either one-way verb --
+    collect never touches them and apply never overwrites an existing live
+    file -- so refusing the WHOLE run over a diverged seed was pure
+    over-refusal. Observed live: the public payload's seed CLAUDE.md refusal
+    masked every other report in the run."""
+    import subprocess as sp
+    from conftest import GIT_ID
+    from dazzle_claude_config.manifest import Manifest
+    co = tmp_path / "checkout"; (co / "dotclaude").mkdir(parents=True)
+    live = tmp_path / "live"; live.mkdir()
+
+    def run(*a):
+        r = sp.run(["git", *GIT_ID, "-C", str(co), *a], capture_output=True, text=True)
+        assert r.returncode == 0, f"git {a}: {r.stderr}"
+
+    sp.run(["git", "init", "-q", str(co)], capture_output=True)
+    (co / "ccs-manifest.json").write_text(
+        '{"manifest_version":1,'
+        '"territories":{"dotclaude":{"root_var":"CLAUDE_DIR","repo_dir":"dotclaude"}},'
+        '"entries":[{"repo":"dotclaude/SEED.md","territory":"dotclaude",'
+        '"target":"SEED.md","strategy":"seed-if-absent"}]}', encoding="utf-8")
+    (co / "dotclaude/SEED.md").write_bytes(b"shared\n")
+    run("add", "-A"); run("commit", "-qm", "base")
+    (co / "dotclaude/SEED.md").write_bytes(b"shared\nTHEIRS\n")
+    run("add", "-A"); run("commit", "-qm", "theirs")
+    (live / "SEED.md").write_bytes(b"shared\nOURS\n")
+    assert merge.two_way_labels(Manifest.load(co), co, roots={
+        "CLAUDE_DIR": live, "USER_CLAUDE": tmp_path / "uc"}) == []
+
+
+# --------------------------------------------------------------------------
+# Mutation-sweep killers (tests/mutation/tw1-report.json). Each is named for
+# the survivor it kills; a suite that cannot go red under these mutants was
+# not constraining the code, only executing it.
+# --------------------------------------------------------------------------
+
+def test_partial_entries_are_skipped_not_crashed(tmp_path):
+    """Kills m1 (or->and on the partial-entry skip). An entry missing its
+    territory OR its target is ignored; under the mutant it proceeds and
+    KeyErrors on territories[None]."""
+    from dazzle_claude_config.manifest import Manifest
+    co, roots, _run = _two_way_repo(tmp_path)
+    m = Manifest.load(co)
+    # non-copy strategy keeps them out of diff_all's pass, scoping this test
+    # to the entry-loop guard the mutant breaks
+    m.entries.append(Entry(repo="dotclaude/orphan.md", strategy="seed-if-absent",
+                           territory=None, target="orphan.md"))
+    m.entries.append(Entry(repo="dotclaude/orphan2.md", strategy="seed-if-absent",
+                           territory="dotclaude", target=None))
+    got = list(merge._head_candidates(m, co, roots))
+    assert [rel for _, rel, _ in got] == [""], \
+        "only the real single-file entry may surface; partial entries are skipped"
+
+
+def test_head_axis_ignores_eol_only_difference(tmp_path):
+    """Kills m5 (dropped normalization in the HEAD equality skip). A live file
+    that differs from the committed blob ONLY in line endings -- the normal
+    state of a Windows live tree against LF git blobs -- is not a merge
+    candidate. Six separate EOL failures in this project's history and, until
+    this test, not one CRLF fixture in the suite."""
+    from dazzle_claude_config.manifest import Manifest
+    co, roots, _run = _two_way_repo(tmp_path)
+    # live content == HEAD content, but CRLF
+    head = (co / "dotclaude/F.md").read_bytes()
+    (roots["CLAUDE_DIR"] / "F.md").write_bytes(head.replace(b"\n", b"\r\n"))
+    items = merge._head_items(Manifest.load(co), co, roots, [],
+                              tmp_path / "stage", "auto")
+    assert items == []
+
+
+def test_two_way_guard_ignores_eol_only_difference(tmp_path):
+    """Kills m10 (dropped normalization on the guard's live side).
+
+    The naive fixture (live == HEAD modulo EOL, worktree untouched) cannot
+    kill this mutant: files_differ is normalized, so the file never enters
+    d.modified and the guard never runs -- an invariant guard, not a killer
+    (round-2 sweep proved it). To exercise the mutated line the file must
+    genuinely differ from the WORKTREE (so diff_all surfaces it) while
+    matching HEAD modulo EOL (so the ours==theirs skip is what decides).
+    Real code: content-equal to HEAD, no label. Mutant: raw CRLF bytes
+    differ from the LF blob, the skip fails, and a phantom two-way appears.
+    """
+    from dazzle_claude_config.manifest import Manifest
+    co, roots, _run = _two_way_repo(tmp_path)
+    head = (co / "dotclaude/F.md").read_bytes()
+    # live == HEAD content, CRLF endings
+    (roots["CLAUDE_DIR"] / "F.md").write_bytes(head.replace(b"\n", b"\r\n"))
+    # worktree edited (uncommitted) so diff_all lists the file as modified
+    (co / "dotclaude/F.md").write_bytes(head + b"uncommitted worktree edit\n")
+    assert merge.two_way_labels(Manifest.load(co), co, roots) == []
+
+
+def test_phantom_rejection_measures_base_to_ours_deletions(tmp_path):
+    """Kills m6 (swapped ours/theirs into infer_base). base_phantom_ratio is
+    DIRECTIONAL by design -- it counts base->OURS deletions retained by
+    theirs. Ours deletes three base lines that theirs retains: the candidate
+    must be REJECTED as a base (sibling recorded), because accepting it would
+    re-delete content theirs still holds. Swapping the arguments measures the
+    empty direction and accepts it. This directionality is a load-bearing
+    contract for the S1 fix (see the s1-phantom-asymmetry note)."""
+    import subprocess as sp
+    from conftest import GIT_ID
+    from dazzle_claude_config.manifest import Manifest
+    co = tmp_path / "checkout"; (co / "dotclaude").mkdir(parents=True)
+    live = tmp_path / "live"; live.mkdir()
+
+    def run(*a):
+        r = sp.run(["git", *GIT_ID, "-C", str(co), *a], capture_output=True, text=True)
+        assert r.returncode == 0, f"git {a}: {r.stderr}"
+
+    sp.run(["git", "init", "-q", str(co)], capture_output=True)
+    (co / "ccs-manifest.json").write_text(
+        '{"manifest_version":1,'
+        '"territories":{"dotclaude":{"root_var":"CLAUDE_DIR","repo_dir":"dotclaude"}},'
+        '"entries":[{"repo":"dotclaude/F.md","territory":"dotclaude",'
+        '"target":"F.md","strategy":"copy"}]}', encoding="utf-8")
+    # EXACTLY two commits: the walk skips HEAD, leaving the fat base as the
+    # single candidate -- infer_base continues past rejections, so any extra
+    # history would hand it an acceptable older base and mask the verdict.
+    base = b"keep\ndel one\ndel two\ndel three\ncommon\n"
+    (co / "dotclaude/F.md").write_bytes(base)
+    run("add", "-A"); run("commit", "-qm", "fat base")
+    (co / "dotclaude/F.md").write_bytes(base + b"THEIRS-TAIL\n")   # theirs retains all
+    run("add", "-A"); run("commit", "-qm", "theirs adds")
+    roots = {"CLAUDE_DIR": live, "USER_CLAUDE": tmp_path / "uc"}
+    (live / "F.md").write_bytes(b"keep\ncommon\nOURS-TAIL\n")      # ours deleted 3
+    items = merge._head_items(Manifest.load(co), co, roots, [],
+                              tmp_path / "stage", "auto")
+    assert len(items) == 1
+    assert items[0].base is None, \
+        "a candidate whose deletions theirs retains is a sibling, not a base"
+    assert items[0].sibling is not None
+
+
+def test_head_axis_refuses_render_strategy_items(tmp_path):
+    """Kills m7 (inverted refusal). A render entry diverging at HEAD gets an
+    item with a refusal reason -- merging the RENDERED target would bake this
+    machine's overlay values into the shared base (AC-22/23)."""
+    import subprocess as sp
+    from conftest import GIT_ID
+    from dazzle_claude_config.manifest import Manifest
+    co = tmp_path / "checkout"; (co / "settings").mkdir(parents=True)
+    live = tmp_path / "live"; live.mkdir()
+
+    def run(*a):
+        r = sp.run(["git", *GIT_ID, "-C", str(co), *a], capture_output=True, text=True)
+        assert r.returncode == 0, f"git {a}: {r.stderr}"
+
+    sp.run(["git", "init", "-q", str(co)], capture_output=True)
+    (co / "ccs-manifest.json").write_text(
+        '{"manifest_version":1,'
+        '"territories":{"dotclaude":{"root_var":"CLAUDE_DIR","repo_dir":"dotclaude"}},'
+        '"entries":[{"repo":"settings/settings.base.json","territory":"dotclaude",'
+        '"target":"settings.json","strategy":"render"}]}', encoding="utf-8")
+    (co / "settings/settings.base.json").write_bytes(b'{"a": 1}\n')
+    run("add", "-A"); run("commit", "-qm", "base")
+    (live / "settings.json").write_bytes(b'{"a": 2}\n')
+    items = merge._head_items(Manifest.load(co), co, roots={
+        "CLAUDE_DIR": live, "USER_CLAUDE": tmp_path / "uc"}, already=[],
+        stage=tmp_path / "stage", base_mode="auto")
+    assert len(items) == 1
+    assert not items[0].mergeable
+    assert "composes its target" in (items[0].reason or "")
+
+
+def test_head_items_infer_a_base_for_directory_entry_files(tmp_path):
+    """The second face of TW1 (run-04, four FAIL-UNEXPECTED, one cause):
+    _head_items had the same is_file() gate, so base inference NEVER ran for
+    directory-entry files and their merges fell through to the baseless
+    worktree axis. With a true ancestor in history, the HEAD axis must now
+    produce the item, per-file, with the base recovered."""
+    from dazzle_claude_config.manifest import Manifest
+    co, roots, _run = _two_way_dir_repo(tmp_path)
+    stage = tmp_path / "stage"
+    items = merge._head_items(Manifest.load(co), co, roots, [], stage, "auto")
+    assert [i.label for i in items] == ["skills/alpha.md"]
+    it = items[0]
+    assert it.rel == "alpha.md"
+    assert it.base is not None, "true ancestor exists; HEAD axis must find it"
+    assert it.base.read_bytes().replace(b"\r\n", b"\n") == b"shared\ncommon\n"
+    assert it.repo_dest == co / "dotclaude/skills/alpha.md"
+
+
 # --------------------------------------------------------------------------
 # Install destination: found by verifying a real run, not by the suite
 # --------------------------------------------------------------------------
