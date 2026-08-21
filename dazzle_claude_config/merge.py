@@ -326,51 +326,95 @@ PHANTOM_RATIO = 0.8
 def infer_base(checkout: Path, repo_path: str, ours: bytes, theirs: bytes,
                max_commits: int = 25,
                rejected: list | None = None) -> tuple[bytes, str] | None:
-    """Best-effort ancestor: the committed version closest to OURS.
+    """Best-effort ancestor for a live-vs-checkout merge.
 
-    Phase 1 has no recorded ancestry, so the base is estimated rather than
-    known. Two guards make a wrong estimate safe:
+    Nothing records which commit a live tree was last synced to, so the
+    base is ESTIMATED from the checkout's history. The estimate follows
+    five rules, each traceable to a measured failure (2026-08-21; scenario
+    classes SC-nn are from the scenario-space DWP):
 
-      * HEAD is excluded outright -- HEAD *is* theirs, and base==theirs makes
-        git conclude "they changed nothing, take ours", silently discarding
-        the other side (measured: 56 lines).
-      * A candidate equal to either side is rejected for the same reason in
-        mirror image (base==ours -> "take theirs", measured: 7 refs lost).
+      1. HEAD is a candidate. HEAD *is* the sync point in the most common
+         workflow -- apply, then edit live (SC-11a). Excluding it meant every
+         ordinary post-sync edit of a single-file entry was refused as
+         two-sided; that is why every refusal anyone saw was CLAUDE.md.
+         But HEAD must beat at least one OLDER candidate: with a one-commit
+         history "HEAD is nearest" is tautological, indistinguishable from
+         adoption (SC-80), and refused.
+      2. A candidate equal to OURS is returned at once. Live then holds
+         nothing unique relative to it -- distance zero, proof not guess.
+         Skipping such candidates labelled 22 one-sided files "both" (SC-10).
+      3. A candidate equal to THEIRS (HEAD included) is exempt from the
+         phantom check -- every deletion is "retained by theirs" by
+         definition there, so the check would reject the true base whenever
+         live deleted >= 3 lines (SC-12) -- but it must win the distance
+         contest STRICTLY. A revert makes HEAD equal an older commit while
+         the checkout genuinely moved (SC-14); and on an exact tie HEAD would
+         otherwise win by an immunity it did not earn (scenario E: live
+         deleted three lines, checkout replaced the same three).
+      4. The nearest candidate is chosen over ALL candidates, rejected ones
+         included. If the nearest was phantom-rejected, return None: a farther
+         base is a wrong base, and falling back to HEAD turned refusals into
+         silent passes (SC-22).
+      5. The phantom check stays for dissimilar candidates: a "base" that
+         attributes deletions to us which theirs still holds is likelier a
+         sibling than an ancestor.
 
-    Returning None is a valid, honest answer: no usable base, degrade to a
-    2-way hand-off rather than invent a third input.
+    Returning None is an honest answer: refuse, degrade to a two-way hand-off,
+    never invent a third input. Known residual, undecidable from the two files
+    and this history: adoption (no sync point exists) and a byte-exact hand
+    revert of live -- both belong to `adopt` / a recorded sync point.
     """
     norm = _normalize_eol
     ours_n, theirs_n = norm(ours), norm(theirs)
     rc, out = _git(["log", "--format=%H", "--follow", "--", repo_path], cwd=checkout)
     if rc != 0 or not out:
         return None
-    best: tuple[int, bytes, str] | None = None
-    for sha in out.split()[1:max_commits + 1]:      # [1:] skips HEAD == theirs
+    shas = out.split()[:max_commits + 1]
+    rc_h, head = _git(["rev-parse", "HEAD"], cwd=checkout)
+    head = head.strip() if rc_h == 0 else ""
+    if head and head not in shas:
+        shas.insert(0, head)          # `git log -- path` omits a TREESAME merge commit at HEAD
+
+    scored: list[tuple[int, bytes, str, bool, bool]] = []   # (score, blob, sha7, rejected, eq_theirs)
+    for sha in shas:
         p = subprocess.run(["git", "show", f"{sha}:{repo_path}"],
                            cwd=str(checkout), capture_output=True)
         if p.returncode != 0 or not p.stdout:
             continue
         cand = norm(p.stdout)
-        if cand == ours_n or cand == theirs_n:
-            continue                                 # degenerate: would collapse
-        ratio, n = base_phantom_ratio(cand, ours_n, theirs_n)
-        if n >= PHANTOM_MIN_LINES and ratio >= PHANTOM_RATIO:
-            # Sibling, not ancestor -- using it would fabricate deletions. Keep
-            # it anyway: it is still the nearest historical version, and being
-            # able to LOOK at it answers "what changed since the last release
-            # of this file" without ever being fed to the merge as a base.
-            if rejected is not None:
-                rejected.append((p.stdout, sha[:7], n, ratio))
-            continue
+        if cand == ours_n:
+            return (p.stdout, sha[:7])                               # rule 2
+        eq_theirs = cand == theirs_n
+        is_rejected = False
+        if not eq_theirs:                                            # rule 3 (exemption)
+            ratio, n = base_phantom_ratio(cand, ours_n, theirs_n)
+            if n >= PHANTOM_MIN_LINES and ratio >= PHANTOM_RATIO:   # rule 5
+                is_rejected = True
+                if rejected is not None:
+                    rejected.append((p.stdout, sha[:7], n, ratio))
         sm = difflib.SequenceMatcher(
             None, cand.decode("utf-8", "replace").splitlines(),
             ours_n.decode("utf-8", "replace").splitlines(), autojunk=False)
         score = sum((i2 - i1) + (j2 - j1)
                     for tag, i1, i2, j1, j2 in sm.get_opcodes() if tag != "equal")
-        if best is None or score < best[0]:
-            best = (score, p.stdout, sha[:7])
-    return (best[1], best[2]) if best else None
+        scored.append((score, p.stdout, sha[:7], is_rejected, eq_theirs))
+
+    if not scored:
+        return None
+    if all(s[4] for s in scored) and len(scored) == 1:
+        # HEAD is the ONLY candidate (single-commit history). "HEAD is nearest"
+        # is then tautological, not evidence: this is indistinguishable from
+        # adoption -- a live tree that never synced from here -- and unknown is
+        # not the same as safe. Refuse; a recorded sync point or `adopt` decides.
+        return None
+    best_score = min(s[0] for s in scored)
+    at_best = [s for s in scored if s[0] == best_score]
+    # rule 3 (strict win): on a tie, a theirs-equal candidate loses
+    others = [s for s in at_best if not s[4]]
+    nearest = (others or at_best)[0]
+    if nearest[3]:                                                   # rule 4
+        return None
+    return (nearest[1], nearest[2])
 
 
 def _items_for_diff(d: EntryDiff) -> list[MergeItem]:

@@ -1,0 +1,48 @@
+{
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "tests/test_base_inference.py"
+ ],
+ "mutations": [
+  {
+   "id": "M5",
+   "file": "dazzle_claude_config/merge.py",
+   "original": "    others = [s for s in at_best if not s[4]]\n    nearest = (others or at_best)[0]",
+   "mutated": "    others = [s for s in at_best if s[4]]\n    nearest = (others or at_best)[0]",
+   "note": "Rule 3 tie-break inverted: on an exact distance tie the theirs-equal candidate now wins by unearned immunity instead of losing."
+  },
+  {
+   "id": "M7",
+   "file": "dazzle_claude_config/merge.py",
+   "original": "            if n >= PHANTOM_MIN_LINES and ratio >= PHANTOM_RATIO:   # rule 5",
+   "mutated": "            if n >= PHANTOM_MIN_LINES or ratio >= PHANTOM_RATIO:   # rule 5",
+   "note": "Rule 5 and/or swap: a single deleted line theirs happens to retain now rejects the candidate, refusing valid bases wholesale."
+  },
+  {
+   "id": "M8",
+   "file": "dazzle_claude_config/merge.py",
+   "original": "        if tag == \"delete\":\n            deleted += [l for l in b[i1:i2] if l.strip()]",
+   "mutated": "        if tag in (\"delete\", \"replace\"):\n            deleted += [l for l in b[i1:i2] if l.strip()]",
+   "note": "Phantom ratio counts `replace` opcodes too, so our own ${CLAUDE_USER_DIR} rewrites inflate the ratio and a true ancestor gets rejected."
+  },
+  {
+   "id": "M9",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "    if base_n == _normalize_eol(ours):\n        return \"one-sided\", f\"checkout ahead; live == {found[1]}\"",
+   "mutated": "    if base_n == ours:\n        return \"one-sided\", f\"checkout ahead; live == {found[1]}\"",
+   "note": "Dropped EOL normalization on the ours comparison: a CRLF-vs-LF live file is misreported as two-sided instead of checkout-ahead."
+  },
+  {
+   "id": "M12",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "    left = _normalize_eol(rp.read_bytes()) if rp.is_file() else b\"\"\n    right = _normalize_eol(lv.read_bytes()) if lv.is_file() else b\"\"",
+   "mutated": "    left = rp.read_bytes() if rp.is_file() else b\"\"\n    right = lv.read_bytes() if lv.is_file() else b\"\"",
+   "note": "_print_file_diff drops EOL normalization, so a CRLF-vs-LF identical file prints a whole-file diff and exits 1 instead of reporting identical and exiting 0."
+  }
+ ]
+}

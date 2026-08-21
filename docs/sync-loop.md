@@ -44,15 +44,28 @@ Steps 1 and 6 are plain git. ccs does not wrap them, because git is already good
 
 ## Why step 3 exists
 
-`apply` and `collect` are **one-way copies**. That is fine when only one side changed. It is not fine when both did:
+`apply` and `collect` are **one-way copies**. That is fine when only one side changed. It is not fine when both did. `status` tells the two cases apart by asking the checkout's history which commit each side still equals, and shows its evidence:
 
 ```
-ccs status
-  dotclaude/CLAUDE.md: differs on both sides -- 2 lines only in live,
-                       6 changed on both, 50 lines only in the checkout, in 10 regions
+ccs status --long
+  dotclaude/CLAUDE.md: differs -- both sides (both moved since 4c2935a) -- 2 lines only in live,
+                       6 replaced, 50 lines only in the checkout, in 10 regions
+  dotclaude/skills: 3 files differ (all one-sided)
+      one-sided   create-project/SKILL.md  ...  -- checkout ahead; live == 4c2935a
+      one-sided   oracle/SKILL.md          ...  -- live ahead; checkout == f2a9249
 ```
 
-Copying either direction there discards whatever the losing side added. So `apply` and `collect` **refuse** those files rather than quietly picking a winner:
+`checkout ahead; live == 4c2935a` means live is byte-for-byte the file as of that commit: nothing on the live side is unique, so copying checkout over it loses nothing. `both moved since 4c2935a` means neither side equals any commit: both hold unique work. When no commit matches either side, `status` says so (`no ancestor in history attributes this change`) and treats the file as two-sided, because unknown is not the same as safe.
+
+A one-sided file is safe for **one** verb, not both. `apply` skips files where live is ahead and `collect` skips files where the checkout is ahead, each with a reason:
+
+```
+ccs apply
+  skipped skills/oracle/SKILL.md -- live is ahead -- nothing to apply; `ccs collect` it
+  applied skills/create-project/SKILL.md
+```
+
+Copying either direction on a two-sided file discards whatever the losing side added. So `apply` and `collect` **refuse** those files rather than quietly picking a winner (`--force` overrides both the refusal and the direction skips -- it really does overwrite everything):
 
 ```
 ccs apply
@@ -74,12 +87,15 @@ Nothing is installed until you pass `--accept`, and nothing is installed at all 
 ## Checking that a step did what it said
 
 ```bash
-ccs diff                      # which files differ
-ccs diff CLAUDE.md            # the actual lines, live vs checkout
-ccs diff CLAUDE.md --difftool # the same, in your own diff tool
+ccs diff                        # which files differ
+ccs diff CLAUDE.md              # the actual lines, live vs checkout
+ccs diff CLAUDE.md --difftool   # the same, in your own diff tool
+ccs diff CLAUDE.md --difftool 3 # live | the commit ccs treats as the common ancestor | checkout
 ```
 
-`ccs diff <path>` distinguishes three states that are easy to confuse: the file differs, the file is `identical -- live and the checkout agree`, and no such file. After a merge the middle one is what you want to see.
+`ccs diff <path>` distinguishes three states that are easy to confuse: the file differs (exit 1), the file is `identical -- live and the checkout agree` (exit 0), and no such file (exit 2). After a merge the middle one is what you want to see.
+
+`--difftool 3` opens three panes in your merge tool, read-only: the middle pane is the commit `status` named as the ancestor, so you can check the attribution by eye -- on a `checkout ahead` file the middle pane equals the left one; on `live ahead` it equals the right one; on a two-sided file it equals neither. The output pane is a scratch copy and nothing is written back. If no ancestor can be found, it says why and opens the two-way view instead.
 
 ## What the loop looks like when it is done
 

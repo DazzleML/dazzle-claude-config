@@ -20,6 +20,7 @@ from .syncmap import diff_all
 @dataclass
 class CollectResult:
     copied: list[str] = field(default_factory=list)
+    skipped: list[tuple[str, str]] = field(default_factory=list)  # (path, reason): wrong direction
     refused_denied: list[tuple[str, str]] = field(default_factory=list)   # (rel, pattern)
     refused_secrets: list[SecretHit] = field(default_factory=list)
     excluded: list[str] = field(default_factory=list)
@@ -39,7 +40,8 @@ class CollectResult:
 
 def collect(manifest: Manifest, checkout: Path, roots: dict[str, Path],
             repo: CheckoutRepo | None = None, dry_run: bool = False,
-            only: str | None = None, add: bool = False) -> CollectResult:
+            only: str | None = None, add: bool = False,
+            skip: dict[str, str] | None = None) -> CollectResult:
     result = CollectResult()
     copied_repo_rels: list[str] = []
 
@@ -84,6 +86,11 @@ def collect(manifest: Manifest, checkout: Path, roots: dict[str, Path],
         for rel in additions + d.modified:
             src = d.live_base / rel if rel else d.live_base
             display = f"{d.entry.repo}/{rel}" if rel else d.entry.repo
+            if skip and display in skip:
+                # The CHECKOUT is ahead here: live never changed since an older
+                # commit. Copying live over it would undo the other machine's work.
+                result.skipped.append((display, skip[display]))
+                continue
 
             pattern = is_denied(rel or src.name, manifest.deny)
             if pattern:

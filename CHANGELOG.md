@@ -4,13 +4,35 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-21
+
+The base problem, finished as far as history can finish it. `ccs` has to guess which commit a live tree was last synced to -- nothing records it -- and every verdict about "who changed this file" rests on that guess. This release fixes three ways the guess was wrong, makes `status` show its evidence, and stops the one-way verbs from copying in the wrong direction. Measured on a real month-old drift: 21 files the tool called "changed on both sides" were untouched on the live side; 3 it called two-sided were untouched on the checkout side; zero actually needed a merge.
+
 ### Fixed
+- **One-sided drift is no longer reported as two-sided.** The base finder threw away any historical version equal to either side, so a live file that simply had not changed since an older commit -- or a checkout that had not -- was treated as if both had moved. That sent users into empty merges and, once the directory-entry guard landed, into per-file refusals. An equal ancestor is now the strongest evidence there is, and it is used.
+- **An ordinary edit after syncing is no longer refused.** The finder also excluded the checkout's latest commit from consideration -- but that commit *is* the sync point in the most common workflow, apply-then-edit. Excluding it meant every post-sync edit of a single-file entry was refused as two-sided; it is why every refusal anyone saw was `CLAUDE.md`. The latest commit is now a candidate, with two safeguards: it must beat an older version *strictly* (a tie went to it by an immunity it had not earned), and it is never the only candidate (with a one-commit history the situation is indistinguishable from a live tree that never synced from here, and the tool refuses rather than guesses).
+- **A rejected base no longer falls back to a farther one.** When the nearest historical version is ruled out as a false ancestor, the walk used to settle for the next one -- or the latest commit -- which flipped a correct refusal into a silent pass. It now refuses. Found by exhaustively enumerating the classifier's state space (`tests/one-offs/enumerate_classifier_states.py`) and confirmed by a two-machine simulator (`tests/one-offs/sim_two_machines.py`); both ride in the repo.
+- **`ccs diff <path>` prints again.** The textual form had been calling a function that did not exist (only the `--difftool` form survived); it now prints a unified diff, says `identical` when the two sides agree, and exits 2 for an unknown path. It also survives a Windows console that cannot encode emoji -- config files carry them, and a read-only verb must not crash on the user's own file.
+- **`status` no longer says "both sides" for files that merely differ.** The per-file label came from a two-way comparison with no base consulted, so "differs on both sides" meant "differs." Each differing file is now attributed through the same base inference the collect/apply guard uses -- `status` and the guard cannot disagree -- and `--long` shows the evidence: `checkout ahead; live == db89bcf`, `live ahead; checkout == 40aa09a`, `both moved since <sha>`, `never committed -- local snapshot`. The "changed on both" line count is now "replaced", which is what a two-way diff actually measures.
+
+- **`ccs diff <bare filename>` no longer guesses when two entries hold a file of that name.** `ccs diff SKILL.md` with a `SKILL.md` under two different entries silently opened the first one in manifest order. It now refuses, lists the candidates, and asks for a qualified path; the match is also on whole path components, so `SAME.md` never lands on `notSAME.md`. Found by the release's own checklist sweep.
+
+### Added
+- **`ccs diff <path> --difftool 3`: the three-way view.** `--difftool` (or `--difftool 2`) opens live against the checkout as before; `3` opens live, the commit `status` named as the common ancestor, and the checkout in your merge tool, read-only -- the output pane is a scratch copy and nothing is written back. It is how the attribution gets checked by eye: on a "checkout ahead" file the middle pane equals the left, on "live ahead" it equals the right, on a two-sided file neither. `merge --preview` only opens files that differ on both sides; one-sided files, where the attribution matters just as much, had no three-pane view at all. When no ancestor can be found it says why and opens the two-way view instead.
+
+### Changed
+- **`apply` and `collect` are direction-aware.** A one-sided file is safe for one verb, not both: live-ahead has nothing to apply (applying would revert your edits), checkout-ahead has nothing to collect (collecting would undo the other machine's work). Each verb now skips the wrong direction and says why, using the attribution above. Before this, running both verbs to "sync everything" silently clobbered one set each way -- the two-way guard, correctly, never fired.
+
+### Known limits, stated
+- Without a recorded sync point, two situations remain undecidable from the files and history alone: a live tree that never synced from this checkout (adoption), and a live file hand-reverted byte-for-byte to an old commit. Both are refused or pass conservatively; neither is guessed. Recording the sync point is the next piece of work.
+
+### Fixed (from 0.4.1a0, interim)
 - **The two-way refusal now protects files inside directory entries** -- which is nearly every file in a real payload. Since it shipped, the guard checked whether each manifest entry's target was a single file and silently skipped every directory-shaped entry (`skills/`, `commands/`), so only single-file entries like a top-level `CLAUDE.md` were ever protected: a `collect` or `apply` could overwrite a genuinely diverged file inside `skills/` and report success. Found by a checklist step written to test message ordering; reproduced on a real payload. Refusals now name the individual files at risk.
 - **Merges of files inside directory entries now get a real ancestor.** The same skip lived in merge's history-aware path, so those files always merged as baseless two-ways even when a perfectly good common ancestor sat in the checkout's history.
 - **A diverged seed file no longer blocks the whole run.** Seed-if-absent entries can't be damaged by either one-way verb -- `collect` never touches them and `apply` never overwrites an existing live file for them -- so refusing everything over one was pure over-refusal, and on a real payload it masked every other report in the run. `ccs merge` still offers them.
 
-### Known, temporary
-- Until the companion base-inference fix lands (in progress on another machine), files whose live copy simply *hasn't changed* since an older commit are refused as if both sides had moved -- loudly, per-file, with `ccs merge` suggested. Loud false refusal replaced silent data loss on purpose; the companion fix dissolves it.
+### Known, temporary (from 0.4.1a0 -- resolved above)
+- 0.4.1a0 shipped with a stated gap: files whose live copy simply *hadn't changed* since an older commit were refused as if both sides had moved -- loudly, per-file, with `ccs merge` suggested. Loud false refusal replaced silent data loss on purpose, for the few hours between the two halves. The base-inference fixes at the top of this entry dissolve it.
 
 ## [0.4.0] - 2026-07-31
 
@@ -162,7 +184,7 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.1...HEAD
 [0.4.0]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.3...v0.3.0

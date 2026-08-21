@@ -32,6 +32,7 @@ class ApplyResult:
     local_only: list[str] = field(default_factory=list)        # never in the checkout
     removals_staged: list[str] = field(default_factory=list)   # moved to backup
     deferred: list[str] = field(default_factory=list)          # render/plugins entries
+    skipped: list[tuple[str, str]] = field(default_factory=list)  # (path, reason): wrong direction
     failed: list[tuple[str, str]] = field(default_factory=list)  # (path, reason)
     mismatched: list[str] = field(default_factory=list)        # type-conflict entries
     only_matched: int = 0                                      # entries passing --only
@@ -41,7 +42,12 @@ class ApplyResult:
 def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
           backup_root: Path, repo: CheckoutRepo | None = None,
           dry_run: bool = False, only: str | None = None,
-          sync_removals: bool = False) -> ApplyResult:
+          sync_removals: bool = False,
+          skip: dict[str, str] | None = None) -> ApplyResult:
+    """`skip` maps a target path (`skills/x.md`) to a reason. Files whose LIVE
+    copy is ahead of the checkout have nothing to apply -- copying would revert
+    the user's own edits -- so the CLI passes them here, attributed through
+    the same base inference the two-way guard uses."""
     if repo is not None and repo.has_conflicts():
         raise ApplyConflictError(
             "checkout has unresolved merge conflicts; resolve them "
@@ -63,6 +69,9 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
             dest = d.live_base / rel if rel else d.live_base
             display = f"{d.entry.target}/{rel}" if rel else d.entry.target
             if rel in d.repo_only and not src.exists():
+                continue
+            if skip and display in skip:
+                result.skipped.append((display, skip[display]))
                 continue
             # Deny-list guards BOTH directions: a HARD_DENY/manifest-denied
             # file committed in the payload must never reach the live tree

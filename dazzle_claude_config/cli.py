@@ -137,9 +137,12 @@ day to day, once it is installed:
             sp.add_argument("path", nargs="?", default=None,
                             help="show the actual line-by-line difference for one "
                                  "file (default: list which files differ)")
-            sp.add_argument("--difftool", action="store_true",
-                            help="open the two sides in your diff tool instead of "
-                                 "printing a unified diff (needs a path)")
+            sp.add_argument("--difftool", nargs="?", const=2, type=int, choices=(2, 3),
+                            default=None, metavar="{2,3}",
+                            help="open the file in your diff tool instead of printing: "
+                                 "2 (default) = live vs checkout; 3 = live | inferred base | "
+                                 "checkout, the three-way view, so the base ccs chose can be "
+                                 "checked by eye (needs a path)")
             sp.add_argument("--tool", default=None,
                             help="git difftool name (default: probe for one whose "
                                  "binary actually exists)")
@@ -176,7 +179,49 @@ def _setup(args) -> tuple[Manifest, Path, dict, CheckoutRepo | None]:
     return manifest, checkout, roots, repo
 
 
-def _print_entry_files(d) -> None:
+def _classify(checkout, d, rel):
+    """Which side owns the change in one differing file -- the same question
+    the collect/apply guard answers, through the same `infer_base`, so status
+    and the guard cannot disagree.
+
+    Returns (kind, evidence). kind is one of:
+      "one-sided"  -- an equal ancestor proves one side holds nothing unique
+      "two-sided"  -- a base was found and both sides moved away from it
+      "no base"    -- nothing in history attributes the change; treated as
+                      two-sided (unknown is not safe), and says so
+      "local snap" -- the path was never committed: the checkout copy is a
+                      stale local snapshot, not the other machine's work
+      "differs"    -- no git repo at all; nothing to attribute against
+    A `status` label used to say "both" for every file that merely differed,
+    with no base consulted (found 2026-08-21). This is the honest version.
+    """
+    if checkout is None:
+        return "differs", "no git history to attribute against"
+    repo_path = f"{d.entry.repo}/{rel}" if rel else d.entry.repo
+    lv = d.live_base / rel if rel else d.live_base
+    import subprocess
+    shown = subprocess.run(["git", "show", f"HEAD:{repo_path}"],
+                           cwd=str(checkout), capture_output=True)
+    if shown.returncode != 0 or not shown.stdout:
+        return "local snap", "never committed -- the checkout copy is a local snapshot; collect replaces it"
+    ours = lv.read_bytes()
+    theirs = shown.stdout
+    found = merge.infer_base(checkout, repo_path, ours, theirs)
+    if found is None:
+        return "no base", "no ancestor in history attributes this change -- treat as both sides"
+    base_n = _normalize_eol(found[0])
+    if base_n == _normalize_eol(ours):
+        return "one-sided", f"checkout ahead; live == {found[1]}"
+    if base_n == _normalize_eol(theirs):
+        return "one-sided", f"live ahead; checkout == {found[1]}"
+    return "two-sided", f"both moved since {found[1]}"
+
+
+_KIND_COLOR = {"one-sided": "green", "two-sided": "magenta", "no base": "yellow",
+               "local snap": "yellow", "differs": "dim"}
+
+
+def _print_entry_files(d, kinds=None) -> None:
     """Per-file breakdown, indented under its entry.
 
     An entry is usually a DIRECTORY (skills/, commands/, ...), so "2 files
@@ -200,9 +245,34 @@ def _print_entry_files(d) -> None:
         if not rel:
             continue
         ol, ch, orp, reg = line_stats(d.live_base / rel, d.repo_base / rel)
-        stats = (f"{ol} only live / {ch} changed / {orp} only checkout"
+        stats = (f"{ol} only live / {ch} replaced / {orp} only checkout"
                  f", {reg} region{'' if reg == 1 else 's'}")
-        print(f"      {c('magenta', 'both     ')}  {rel:<{width}}  {c('dim', stats)}")
+        kind, evidence = (kinds or {}).get(rel, ("differs", ""))
+        label = c(_KIND_COLOR[kind], f"{kind:<10}")
+        tail = f"{c('dim', stats)}" + (f"  {c('dim', '-- ' + evidence)}" if evidence else "")
+        print(f"      {label}  {rel:<{width}}  {tail}")
+
+
+class AmbiguousPath(Exception):
+    """A user path matched more than one file; `.candidates` lists the
+    qualified repo-side labels that would each have resolved."""
+
+    def __init__(self, want: str, candidates: list[str]):
+        super().__init__(want)
+        self.want, self.candidates = want, candidates
+
+
+def _suffix_match(label: str, want: str) -> bool:
+    # Whole path components only: `SAME.md` matches `s/SAME.md`, never
+    # `s/notSAME.md`.
+    return label == want or label.endswith("/" + want)
+
+
+def _print_ambiguous(e: AmbiguousPath) -> None:
+    print(c("red", f"ambiguous: {e.want!r} matches {len(e.candidates)} files")
+          + c("dim", " -- name one of them:"), file=sys.stderr)
+    for label in e.candidates:
+        print(f"  {label}", file=sys.stderr)
 
 
 def _resolve_pair(all_diffs, want: str):
@@ -212,21 +282,33 @@ def _resolve_pair(all_diffs, want: str):
     manifest, so a file that is perfectly in sync still resolves. Without the
     fallback an in-sync file was indistinguishable from a typo -- and after a
     merge, in-sync is the normal state.
+
+    A bare filename that lives in two entries (`SAME.md` under both `s/` and
+    `t/`) used to resolve to whichever entry came first in the manifest, with
+    no sign that a second candidate existed (found by the v0.4.1 checklist
+    sweep). That is a confident wrong answer at the path layer; it now raises
+    AmbiguousPath so the caller can list the candidates and ask for a
+    qualified path instead.
     """
+    hits: list[tuple] = []
     for d in all_diffs:
         for rel in [*d.modified, *d.live_only, *d.repo_only]:
             target = f"{d.entry.target}/{rel}" if rel else d.entry.target
             repo = f"{d.entry.repo}/{rel}" if rel else d.entry.repo
-            if target.endswith(want) or repo.endswith(want):
+            if _suffix_match(target, want) or _suffix_match(repo, want):
                 lv = d.live_base / rel if rel else d.live_base
                 rp = d.repo_base / rel if rel else d.repo_base
-                return lv, rp, target, repo
+                hits.append((lv, rp, target, repo))
+    if len(hits) > 1:
+        raise AmbiguousPath(want, [h[3] for h in hits])
+    if hits:
+        return hits[0]
     for d in all_diffs:
         for label in (d.entry.target, d.entry.repo):
             if not label:
                 continue
             rel = ""
-            if label.endswith(want):
+            if _suffix_match(label, want):
                 pass
             elif want.startswith(label.rstrip("/") + "/"):
                 rel = want[len(label.rstrip("/")) + 1:]
@@ -241,8 +323,18 @@ def _resolve_pair(all_diffs, want: str):
     return None
 
 
-def _launch_file_difftool(all_diffs, wanted: str, tool: str | None) -> int:
-    """Open live vs checkout for one file in the user's own diff tool.
+def _launch_file_difftool(all_diffs, wanted: str, tool: str | None, *,
+                          ways: int = 2, checkout=None, roots=None, repo=None) -> int:
+    """Open one file in the user's own diff tool.
+
+    ways=2: live vs checkout, through git's difftool registry.
+    ways=3: live | inferred base | checkout, through git's MERGETOOL registry
+            (the $LOCAL $BASE $REMOTE $MERGED contract), with the output pane
+            pointed at a scratch copy that is never read back. This is how the
+            base ccs chose for a file -- the thing every "one-sided"/"two-sided"
+            verdict rests on -- gets checked by a human. `merge --preview` only
+            opens files that differ on BOTH sides; one-sided files, where the
+            attribution matters just as much, had no three-pane view at all.
 
     Launches whenever both sides RESOLVE, not only when they differ. If the
     user asked for the tool, open the tool -- confirming two files are
@@ -250,12 +342,19 @@ def _launch_file_difftool(all_diffs, wanted: str, tool: str | None) -> int:
     refusing with "nothing to compare" answers a question nobody asked.
     """
     want = wanted.replace(chr(92), "/").strip("/")
-    found = _resolve_pair(all_diffs, want)
+    try:
+        found = _resolve_pair(all_diffs, want)
+    except AmbiguousPath as e:
+        _print_ambiguous(e)
+        return EXIT_ERROR
     if found is None:
         print(c("yellow", f"no file matches {wanted!r}")
               + c("dim", " -- run `ccs diff` with no argument to list what differs"))
         return EXIT_CLEAN
-    lv, rp, target, repo = found
+    lv, rp, target, repo_label = found
+    if ways == 3:
+        return _launch_three_way(lv, rp, target, repo_label, tool, checkout, roots, repo)
+    repo = repo_label
     # A file present on only one side is an ADD or a REMOVE, and looking at
     # it is exactly what you want -- refusing to open it answers a question
     # nobody asked. Substitute an empty file for the absent side, which is
@@ -277,6 +376,110 @@ def _launch_file_difftool(all_diffs, wanted: str, tool: str | None) -> int:
     return EXIT_CLEAN if same else EXIT_DRIFT
 
 
+def _launch_three_way(lv, rp, target, repo_label, tool, checkout, roots, repo) -> int:
+    """live | base | checkout in the user's mergetool, read-only.
+
+    The base is whatever `infer_base` picks -- the same call `status` and the
+    collect/apply guard make -- so what opens is the tool's actual reasoning,
+    not a reconstruction of it. If no base can be inferred (no git repo, no
+    history, or every candidate rejected) it says so and opens the two-way
+    instead: an honest two-pane beats a three-pane with an invented center.
+    """
+    import shutil
+    import subprocess
+    from .manifest import Entry
+    if checkout is None or repo is None or not lv.is_file() or not rp.is_file():
+        why = ("the checkout is not a git repository" if repo is None
+               else "one side is absent, so there is no history to attribute against")
+        print(c("yellow", f"no base possible -- {why}; opening the two-way view"))
+        return _two_way_fallback(lv, rp, target, repo_label, tool)
+    shown = subprocess.run(["git", "show", f"HEAD:{repo_label}"], cwd=str(checkout),
+                           capture_output=True)
+    theirs = shown.stdout if shown.returncode == 0 else b""
+    found = merge.infer_base(checkout, repo_label, lv.read_bytes(), theirs) if theirs else None
+    if found is None:
+        why = ("the path was never committed" if not theirs
+               else "no ancestor in history attributes this change")
+        print(c("yellow", f"no base could be inferred -- {why}; opening the two-way view"))
+        return _two_way_fallback(lv, rp, target, repo_label, tool)
+    base_bytes, sha = found
+    ws = merge.workspace_for(roots) / "look"
+    ws.mkdir(parents=True, exist_ok=True)
+    stem = repo_label.replace("/", "__").replace(chr(92), "__")
+    base_f = ws / f"{stem}.base-{sha}"
+    base_f.write_bytes(base_bytes)
+    merged_f = ws / f"{stem}.look-only"          # the output pane; never read back
+    shutil.copyfile(lv, merged_f)
+    item = merge.MergeItem(entry=Entry(repo=repo_label, strategy="copy"),
+                           rel="", live=lv, repo=rp, base=base_f, repo_dest=None)
+    name = merge.resolve_tool(tool)
+    base_n = merge._normalize_eol(base_bytes)
+    side = ("== live (checkout ahead)" if base_n == merge._normalize_eol(lv.read_bytes())
+            else "== checkout (live ahead)" if base_n == merge._normalize_eol(theirs)
+            else "neither side (both moved)")
+    merge.launch(name, item, merged_f, base_f, wait=False)
+    print(c("dim", f"opened {name} (3-way): live | base {sha} {side} | checkout/{repo_label}"))
+    print(c("dim", f"  output pane is a scratch copy ({merged_f.name}); nothing is written back"))
+    return EXIT_DRIFT
+
+
+def _two_way_fallback(lv, rp, target, repo_label, tool) -> int:
+    name = merge.resolve_difftool(tool)
+    merge.launch_difftool(name, rp, lv)
+    print(c("dim", f"opened {name}: checkout/{repo_label} vs live/{target}"))
+    return EXIT_DRIFT
+
+
+def _print_file_diff(all_diffs, wanted: str) -> int:
+    """`ccs diff <path>`: print the line-by-line difference for one file.
+
+    The printed counterpart of `--difftool`, sharing its path resolution so the
+    two cannot drift. Three outcomes, each distinct on purpose (they were once
+    conflated as "no match"):
+      differs   -> unified diff, exit 1
+      identical -> one line saying so, exit 0 (the normal case right after a
+                   merge, and the claim "merged and installed" is checked by it)
+      no match  -> exit 2
+    Line endings are normalised before comparing, as everywhere else, so a
+    CRLF-vs-LF file reads as identical rather than as a wall of changes.
+    """
+    import difflib
+    want = wanted.replace(chr(92), "/").strip("/")
+    try:
+        found = _resolve_pair(all_diffs, want)
+    except AmbiguousPath as e:
+        _print_ambiguous(e)
+        return EXIT_ERROR
+    if found is None:
+        print(c("red", f"no such file in any manifest entry: {wanted!r}")
+              + c("dim", " -- run `ccs diff` with no argument to list what differs"),
+              file=sys.stderr)
+        return EXIT_ERROR
+    lv, rp, target, repo = found
+    left = _normalize_eol(rp.read_bytes()) if rp.is_file() else b""
+    right = _normalize_eol(lv.read_bytes()) if lv.is_file() else b""
+    if left == right:
+        print(c("green", "identical") + f" -- live and the checkout agree: live/{target}")
+        return EXIT_CLEAN
+    a = left.decode("utf-8", "replace").splitlines(keepends=True)
+    b = right.decode("utf-8", "replace").splitlines(keepends=True)
+    absent = (" (absent in checkout)" if not rp.is_file() else
+              " (absent in live)" if not lv.is_file() else "")
+    print(c("bold", f"checkout/{repo}  ->  live/{target}{absent}"))
+    for line in difflib.unified_diff(a, b, fromfile=f"checkout/{repo}",
+                                     tofile=f"live/{target}", n=3):
+        s = line.rstrip("\r\n")
+        if line.startswith("+") and not line.startswith("+++"):
+            print(c("green", s))
+        elif line.startswith("-") and not line.startswith("---"):
+            print(c("red", s))
+        elif line.startswith("@@"):
+            print(c("cyan", s))
+        else:
+            print(s)
+    return EXIT_DRIFT
+
+
 def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None) -> None:
     """The status report, written for someone who has not read the docs.
 
@@ -285,6 +488,16 @@ def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None) -> None:
     and the checkout's own uncommitted work (git's territory, not ours).
     """
     files = sum(d.total for d in all_diffs)
+    # Attribute every differing file ONCE, through the guard's own infer_base.
+    # Cost: one `git show` for HEAD plus the history walk per differing file;
+    # an equal ancestor short-circuits the walk, so the common one-sided case
+    # is two spawns. Without this, "both" meant "differs" (2026-08-21).
+    classified: dict[int, dict[str, tuple[str, str]]] = {}
+    co_path = checkout if repo is not None else None
+    for d in diffs:
+        if d.mismatch or not d.modified:
+            continue
+        classified[id(d)] = {rel: _classify(co_path, d, rel) for rel in d.modified}
     print(f"{c('bold', 'checkout')}  {c('cyan', str(checkout))}")
     if repo is not None:
         print(f"          {c('dim', render.humanize_branch(repo.branch_info()))}")
@@ -333,8 +546,20 @@ def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None) -> None:
                 # file count matters there; for a single-file entry like
                 # CLAUDE.md it is noise that reads as a difference count.
                 single = n == 1 and d.repo_base.is_file()
-                bits.append("differs on both sides" if single
-                            else f"{render.n_files(n)} differ on both sides")
+                kinds = classified.get(id(d), {})
+                k2 = sum(1 for k, _ in kinds.values() if k in ("two-sided", "no base"))
+                if single:
+                    # A single-file entry gets no per-file breakdown line, so its
+                    # evidence (which commit a side equals) has to ride here.
+                    kind, evidence = next(iter(kinds.values()), ("differs", ""))
+                    label = (c('magenta', 'both sides') if kind in ("two-sided", "no base")
+                             else c('green', 'one-sided') if kind == "one-sided" else kind)
+                    bits.append("differs -- " + label
+                                + (f" ({c('dim', evidence)})" if evidence else ""))
+                else:
+                    bits.append(f"{render.n_files(n)} {'differs' if n == 1 else 'differ'}"
+                                + (f" ({c('magenta', str(k2))} on both sides)" if k2 else
+                                   f" ({c('green', 'all one-sided')})" if kinds else ""))
                 if n <= 25:
                     ol = ch = orp = reg = 0
                     for rel in d.modified:
@@ -343,13 +568,13 @@ def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None) -> None:
                         a, b_, c_, r = line_stats(lv, rp)
                         ol += a; ch += b_; orp += c_; reg += r
                     detail = (f"{c('yellow', str(ol))} lines only in live, "
-                              f"{c('magenta', str(ch))} changed on both, "
+                              f"{c('magenta', str(ch))} replaced, "
                               f"{c('cyan', str(orp))} lines only in the checkout"
                               f", in {reg} region{'' if reg == 1 else 's'}")
                     bits[-1] += f" -- {detail}"
             print(f"  {c('cyan', d.entry.repo)}: {', '.join(bits)}")
             if long_form:
-                _print_entry_files(d)
+                _print_entry_files(d, classified.get(id(d)))
 
     # Only explain the collapse when the BUDGET caused it. If the user asked
     # for --compact, telling them they exceeded a budget is both wrong and
@@ -378,15 +603,24 @@ def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None) -> None:
         # not merely incomplete -- they are ONE-WAY overwrites, so following
         # that advice discards whichever side loses. That is exactly how 50
         # lines of CLAUDE.md went missing before this verb existed.
-        two_way = [d for d in diffs if d.modified]
+        two_way = [rel for kinds in classified.values()
+                   for rel, (k, _) in kinds.items() if k in ("two-sided", "no base")]
+        unattributed = [rel for kinds in classified.values()
+                        for rel, (k, _) in kinds.items() if k == "differs"]
         head = c("bold_yellow", f"status: drift in {render.n_entries(len(diffs))}")
         if two_way:
-            print(head + f" -- {render.n_entries(len(two_way))} differ on "
+            differ = "differs" if len(two_way) == 1 else "differ"
+            print(head + f" -- {render.n_files(len(two_way))} {differ} on "
                   + c("bold_red", "BOTH sides") + "; run " + c("bold", "ccs merge")
-                  + " for those " + c("dim", "(collect/apply would overwrite one side)"))
+                  + " for those " + c("dim", "(collect/apply would overwrite one side; "
+                                              "--long shows which and why)"))
             print("        " + c("dim", "one-sided drift is safe with ")
                   + c("bold", "ccs collect") + c("dim", " (live -> checkout) or ")
                   + c("bold", "ccs apply") + c("dim", " (checkout -> live)"))
+        elif unattributed:
+            differ = "differs" if len(unattributed) == 1 else "differ"
+            print(head + f" -- {render.n_files(len(unattributed))} {differ}, and with no git "
+                  "history ccs cannot tell which side changed; review before collect/apply")
         else:
             print(head + " -- run " + c("bold", "ccs diff")
                   + " to see which files, then " + c("bold", "ccs collect")
@@ -394,7 +628,22 @@ def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None) -> None:
                   + " (checkout -> live)")
 
 
+def _never_crash_on_content() -> None:
+    """`ccs diff <path>` prints file CONTENT, and config files carry emoji.
+    On a cp1252 Windows console that is UnicodeEncodeError -- a crash, from
+    a read-only verb, on the user's own file. Keep the console's encoding
+    (switching to UTF-8 would mojibake legacy cmd) but degrade unencodable
+    characters to '?' instead of dying. Capture streams in tests lack
+    reconfigure(); that is fine."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _never_crash_on_content()
     args = _build_parser().parse_args(argv)
     render.init(getattr(args, "no_color", False))
     try:
@@ -403,8 +652,34 @@ def main(argv: list[str] | None = None) -> int:
         # GUARD both one-way verbs. `collect`/`apply` copy `modified` files
         # in the same breath as the safe one-sided ones; for a genuinely
         # two-way file that discards the losing side and reports success.
+        wrong_dir: dict[str, str] = {}
         if args.verb in ("collect", "apply") and not getattr(args, "force", False):
             risky = merge.two_way_labels(manifest, checkout, roots)
+            # DIRECTION. A one-sided file is safe for ONE verb, not both:
+            # live-ahead has nothing to apply (apply would revert the user's
+            # edits); checkout-ahead has nothing to collect (collect would undo
+            # the other machine's work). Attribute each differing file through
+            # the same infer_base the guard uses and skip the wrong direction.
+            # Measured 2026-08-21: 3 live-ahead and 22 checkout-ahead files on
+            # one machine -- either verb alone would have clobbered one set.
+            if repo is not None:
+                for d in diff_all(manifest, checkout, roots):
+                    if d.mismatch or not d.modified:
+                        continue
+                    for rel in d.modified:
+                        kind, evidence = _classify(checkout, d, rel)
+                        key = (f"{d.entry.target}/{rel}" if rel else d.entry.target) \
+                            if args.verb == "apply" else \
+                            (f"{d.entry.repo}/{rel}" if rel else d.entry.repo)
+                        if args.verb == "apply" and (
+                                (kind == "one-sided" and evidence.startswith("live ahead"))
+                                or kind == "local snap"):
+                            wrong_dir[key] = ("live is ahead -- nothing to apply; `ccs collect` it"
+                                              if kind == "one-sided" else
+                                              "checkout copy is an uncommitted local snapshot, older than live")
+                        elif args.verb == "collect" and kind == "one-sided" \
+                                and evidence.startswith("checkout ahead"):
+                            wrong_dir[key] = "checkout is ahead -- nothing to collect; `ccs apply` it"
             # Both verbs carry --only since 0.4.0; getattr stays as armor
             # against the original 0.3.x bug, where reaching for args.only
             # unconditionally crashed collect while apply passed.
@@ -423,7 +698,9 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.verb == "collect":
             r = collect(manifest, checkout, roots, repo=repo, dry_run=args.dry_run,
-                        only=args.only, add=args.add)
+                        only=args.only, add=args.add, skip=wrong_dir)
+            for rel, why in r.skipped:
+                print(f"{c('dim', 'skipped')} {rel} {c('dim', '-- ' + why)}")
             for rel, pattern in r.refused_denied:
                 print(f"{c('magenta', 'protected')} {rel} "
                       f"{c('dim', f'-- matches deny rule {pattern!r}, stays local')}")
@@ -477,7 +754,10 @@ def main(argv: list[str] | None = None) -> int:
             backups = roots["USER_CLAUDE"] / "backups" / "ccs"
             r = apply(manifest, checkout, roots, backups, repo=repo,
                       dry_run=args.dry_run, only=args.only,
-                      sync_removals=args.sync_removals)
+                      sync_removals=args.sync_removals,
+                      skip=wrong_dir)
+            for rel, why in r.skipped:
+                print(f"{c('dim', 'skipped')} {rel} {c('dim', '-- ' + why)}")
             for rel, pattern in r.refused_denied:
                 print(c("bold_red", "REFUSED") +
                       f" (deny-list {pattern} -- remove it from the "
@@ -595,9 +875,12 @@ def main(argv: list[str] | None = None) -> int:
             # "merged and installed" is a claim; this is how you check it.
             wanted = getattr(args, "path", None)
             if wanted:
-                if getattr(args, 'difftool', False):
+                ways = getattr(args, 'difftool', None)
+                if ways:
                     return _launch_file_difftool(all_diffs, wanted,
-                                                 getattr(args, 'tool', None))
+                                                 getattr(args, 'tool', None),
+                                                 ways=ways, checkout=checkout,
+                                                 roots=roots, repo=repo)
                 return _print_file_diff(all_diffs, wanted)
             for d in diffs:
                 if d.mismatch:

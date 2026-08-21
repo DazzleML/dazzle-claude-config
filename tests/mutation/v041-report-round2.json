@@ -1,0 +1,68 @@
+{
+  "harness": {
+    "name": "mutation_sweep.py",
+    "version": "0.1.0"
+  },
+  "environment": {
+    "python": "3.12.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "root": ".",
+    "test_command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "tests/test_base_inference.py"
+    ],
+    "timestamp": "2026-08-21T06:40:16-04:00"
+  },
+  "results": [
+    {
+      "id": "M5",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "Rule 3 tie-break inverted: on an exact distance tie the theirs-equal candidate now wins by unearned immunity instead of losing.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M7",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "Rule 5 and/or swap: a single deleted line theirs happens to retain now rejects the candidate, refusing valid bases wholesale.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M8",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "Phantom ratio counts `replace` opcodes too, so our own ${CLAUDE_USER_DIR} rewrites inflate the ratio and a true ancestor gets rejected.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M9",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Dropped EOL normalization on the ours comparison: a CRLF-vs-LF live file is misreported as two-sided instead of checkout-ahead.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M12",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "_print_file_diff drops EOL normalization, so a CRLF-vs-LF identical file prints a whole-file diff and exits 1 instead of reporting identical and exiting 0.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    }
+  ],
+  "summary": {
+    "killed": 4,
+    "survived": 1
+  },
+  "anomalies": []
+}

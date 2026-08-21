@@ -68,7 +68,7 @@ ccs collect                   # live config INTO the checkout (credentials refus
 git -C <checkout> commit -am "config: ..." && git push
 ```
 
-`apply` and `collect` are one-way copies, so they **refuse** a file that changed on both sides rather than picking a winner -- that is what `merge` is for. Steps 1 and 6 are plain git; ccs does not wrap them.
+`apply` and `collect` are one-way copies, so they **refuse** a file that changed on both sides rather than picking a winner -- that is what `merge` is for -- and each **skips** a file the other verb owns (live ahead: nothing to apply; checkout ahead: nothing to collect), saying why. `ccs status --long` shows which commit each side still equals, so the call is checkable, and `ccs diff <path> --difftool 3` shows that commit as the middle pane of your merge tool. Steps 1 and 6 are plain git; ccs does not wrap them.
 
 **[The full loop, step by step, with what each step guarantees →](docs/sync-loop.md)**
 

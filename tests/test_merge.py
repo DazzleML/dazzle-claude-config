@@ -592,17 +592,13 @@ def test_two_way_labels_dir_entry_resolved_worktree_not_labeled(tmp_path):
     assert merge.two_way_labels(Manifest.load(co), co, roots) == []
 
 
-# HANDSHAKE with plzwork's S1 commit: that commit deletes the @S1_INTERLOCK
+# HANDSHAKE with the companion S1 commit: that commit deletes the @S1_INTERLOCK
 # decorator line below -- a one-line edit -- in the SAME commit that fixes
 # infer_base's equality skip. strict=True means the suite goes red on the
 # unexpected pass, so the marker cannot be forgotten between the two commits.
 # See dwp8 + the s1-phantom-asymmetry note (both in private/claude).
-S1_INTERLOCK = pytest.mark.xfail(strict=True, reason=(
-    "until S1 (plzwork): infer_base skips any historical candidate equal to "
-    "either side, so one-sided drift yields base=None and gets labeled"))
-
-
-@S1_INTERLOCK
+# (S1 landed 2026-08-21 -- the strict xfail fired as designed and the marker
+# was removed in the same commit. The test below is now a plain regression.)
 def test_two_way_labels_dir_entry_one_sided_live_unchanged(tmp_path):
     """Live equals the BASE commit verbatim -- only the checkout moved. That is
     one-sided drift and must not be refused; a plain apply is the right call
