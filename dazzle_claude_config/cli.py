@@ -37,6 +37,10 @@ def _add_common(parser, suppress=False):
     parser.add_argument("--no-color", action="store_true",
                         default=argparse.SUPPRESS if suppress else False,
                         help="plain output, no ANSI color (NO_COLOR is honored too)")
+    parser.add_argument("--no-fetch", action="store_true",
+                        default=argparse.SUPPRESS if suppress else False,
+                        help="do not fetch the upstream first; the branch line then "
+                             "reflects the last fetch, and says so (config: fetch)")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -92,6 +96,10 @@ day to day, once it is installed:
                             help="copy even files that changed on BOTH sides "
                                  "(DESTRUCTIVE -- discards the losing side; "
                                  "prefer ccs merge)")
+            sp.add_argument("--require-current", action="store_true",
+                            help="refuse (exit 1) when the checkout is behind its "
+                                 "upstream, instead of warning and proceeding "
+                                 "(config: require_current)")
         if verb == "collect":
             sp.add_argument("--only", default=None,
                             help="limit to entries whose repo path starts with this prefix")
@@ -480,7 +488,31 @@ def _print_file_diff(all_diffs, wanted: str) -> int:
     return EXIT_DRIFT
 
 
-def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None) -> None:
+def _remote_state(repo, cfg, args):
+    """Fetch (unless disabled) and report (fetched, detail, behind).
+
+    fetched: True  -- a fetch succeeded this run; the branch line is current
+             None  -- skipped (--no-fetch / fetch: false / no upstream)
+             False -- failed; `detail` carries git's first stderr line
+    behind:  commits the upstream has that HEAD lacks, per the tracking ref
+             as of now (after the fetch, if one ran); None without an upstream.
+
+    One fetch per process. Every verb that wants to know whether a `git pull`
+    is due goes through here, so `status` and the verbs cannot disagree about
+    what "behind" means -- the same rule as sharing infer_base for attribution.
+    """
+    if repo is None:
+        return None, "", None
+    want = bool((cfg or {}).get("fetch", True)) and not getattr(args, "no_fetch", False)
+    fetched, detail = (None, "")
+    if want:
+        fetched, detail = repo.fetch(timeout=int((cfg or {}).get("fetch_timeout", 15)))
+    _ahead, behind = repo.ahead_behind()
+    return fetched, detail, behind
+
+
+def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None,
+                  remote=(render.UNSPECIFIED, "", None)) -> None:
     """The status report, written for someone who has not read the docs.
 
     Three legs, because that is what "in sync" actually means here:
@@ -500,7 +532,10 @@ def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None) -> None:
         classified[id(d)] = {rel: _classify(co_path, d, rel) for rel in d.modified}
     print(f"{c('bold', 'checkout')}  {c('cyan', str(checkout))}")
     if repo is not None:
-        print(f"          {c('dim', render.humanize_branch(repo.branch_info()))}")
+        fetched, detail = remote[0], remote[1]
+        line = render.humanize_branch(repo.branch_info(), fetched, detail)
+        tone = ("yellow" if fetched is False or "behind" in line else "dim")
+        print(f"          {c(tone, line)}")
         dirty = len([l for l in repo.porcelain() if l.strip()])
         if dirty:
             # Build the plural separately: reusing the outer f-string's quote
@@ -594,7 +629,13 @@ def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None) -> None:
             print(f"  {c('magenta', f'{target}/{rel}')}")
 
     print()
-    if not diffs:
+    behind = remote[2] if len(remote) > 2 else None
+    if not diffs and behind:
+        up = repo.upstream() if repo is not None else "upstream"
+        print(c("bold_yellow", "status: live matches the checkout") +
+              f" -- but the checkout is {behind} behind {up}; "
+              + c("bold", "git pull") + " then run status again")
+    elif not diffs:
         print(c("bold_green", "status: clean") +
               " -- your live config and the checkout match; "
               "nothing to collect, nothing to apply")
@@ -648,6 +689,39 @@ def main(argv: list[str] | None = None) -> int:
     render.init(getattr(args, "no_color", False))
     try:
         manifest, checkout, roots, repo = _setup(args)
+
+        # REMOTE. One fetch per run, shared by status and the verbs, so the
+        # branch line is a claim about the remote rather than about the last
+        # fetch (the first round trip read "in sync with origin/main" only
+        # because the operator had fetched by hand minutes earlier). Fetch
+        # touches remote-tracking refs only; a failure is reported, never
+        # fatal -- ccs must keep working offline.
+        cfg = userconfig.load(roots.get('USER_CLAUDE'))
+        fetched, fetch_detail, behind = (render.UNSPECIFIED, "", None)
+        if args.verb in ("status", "collect", "apply"):
+            fetched, fetch_detail, behind = _remote_state(repo, cfg, args)
+
+        if args.verb in ("collect", "apply") and behind:
+            # A one-way verb against a checkout that is behind installs or
+            # stages content the remote has already superseded. Nothing is
+            # LOST either way, and "sync what I have here, now" is a
+            # legitimate intent -- so the default is to say so and proceed;
+            # require_current turns it into a refusal for users who want the
+            # pull-first loop enforced. A FAILED fetch never refuses: refusing
+            # to work because the network is down would defeat the tool.
+            strict = getattr(args, "require_current", False) or bool(cfg.get("require_current"))
+            what = ("applying what is here; git pull first for the other machine's latest"
+                    if args.verb == "apply" else
+                    "collecting onto a stale base; git pull before you push")
+            msg = f"checkout is {behind} behind {repo.upstream()}"
+            if strict:
+                print(c("bold_red", "REFUSING") + f": {msg} -- git pull first "
+                      + c("dim", "(--require-current is set)"))
+                return EXIT_DRIFT
+            print(c("yellow", "note") + f": {msg} -- {what}")
+        elif args.verb in ("collect", "apply") and fetched is False:
+            print(c("dim", f"note: could not fetch {repo.upstream() or 'upstream'}"
+                           f" ({fetch_detail}); pull status unknown, proceeding"))
 
         # GUARD both one-way verbs. `collect`/`apply` copy `modified` files
         # in the same breath as the safe one-sided ones; for a genuinely
@@ -868,8 +942,11 @@ def main(argv: list[str] | None = None) -> int:
             elif getattr(args, 'compact', False):
                 over['status_detail'] = 'compact'
             _print_status(checkout, repo, roots, all_diffs, diffs,
-                          userconfig.load(roots.get('USER_CLAUDE'), over))
-            return EXIT_CLEAN if not diffs else EXIT_DRIFT
+                          userconfig.load(roots.get('USER_CLAUDE'), over),
+                          remote=(fetched, fetch_detail, behind))
+            # Behind the upstream is drift too: the checkout is not the
+            # latest the fleet has, even when live matches it exactly.
+            return EXIT_CLEAN if not diffs and not behind else EXIT_DRIFT
         else:
             # `ccs diff <path>` shows the CONTENT, not just the filename.
             # "merged and installed" is a claim; this is how you check it.

@@ -68,12 +68,25 @@ _BRANCH_RE = re.compile(
     r"^## (?P<local>[^.\s]+)(?:\.\.\.(?P<remote>\S+))?(?: \[(?P<track>[^\]]+)\])?")
 
 
-def humanize_branch(raw: str) -> str:
+UNSPECIFIED = object()   # humanize_branch: caller said nothing about fetching
+
+
+def humanize_branch(raw: str, fetched=UNSPECIFIED, detail: str = "") -> str:
     """Turn `git status -sb`'s first line into something readable.
 
     '## main...origin/main'            -> 'on main, in sync with origin/main'
-    '## main...origin/main [ahead 2]'  -> 'on main, 2 ahead of origin/main'
+    '## main...origin/main [ahead 2]'  -> 'on main, 2 ahead vs origin/main'
+    '## main...origin/main [behind 3]' -> 'on main, 3 behind vs origin/main -- git pull'
     '## main' (no upstream)            -> 'on main, no upstream configured'
+
+    `fetched` says whether a fetch ran THIS run: True -> the line is a claim
+    about the remote; None -> it was skipped (`--no-fetch`), so "in sync"
+    becomes "in sync as last fetched"; False -> it failed, and the negative is
+    withheld: "pull status unknown -- fetch failed: <detail>". Left
+    UNSPECIFIED, the line is the bare parse, for callers that only format. Saying "in
+    sync" after a failed or skipped fetch is a confident claim nothing
+    checked -- the branch-line twin of calling a file "both sides" without a
+    base.
     """
     m = _BRANCH_RE.match(raw or "")
     if not m:
@@ -83,14 +96,25 @@ def humanize_branch(raw: str) -> str:
     local, remote, track = m.group("local"), m.group("remote"), m.group("track")
     if not remote:
         return f"on {local}, no upstream configured"
-    if not track:
-        return f"on {local}, in sync with {remote}"
-    ahead = re.search(r"ahead (\d+)", track)
-    behind = re.search(r"behind (\d+)", track)
+    ahead = re.search(r"ahead (\d+)", track or "")
+    behind = re.search(r"behind (\d+)", track or "")
+    gone = bool(track) and "gone" in track
     bits = []
     if ahead:
         bits.append(f"{ahead.group(1)} ahead")
     if behind:
         bits.append(f"{behind.group(1)} behind")
-    return f"on {local}, {' / '.join(bits)} vs {remote}" if bits \
+    if gone:
+        return f"on {local}, upstream {remote} no longer exists on the remote"
+    if fetched is False:
+        why = f": {detail}" if detail else ""
+        state = f"{' / '.join(bits)} vs {remote} as last fetched" if bits else \
+            f"vs {remote} as last fetched"
+        return f"on {local}, pull status unknown -- fetch failed{why} ({state})"
+    line = f"on {local}, {' / '.join(bits)} vs {remote}" if bits \
         else f"on {local}, in sync with {remote}"
+    if fetched is None:
+        line += " as last fetched"
+    if behind and fetched is not UNSPECIFIED:
+        line += " -- git pull" if fetched else " -- git fetch to confirm"
+    return line

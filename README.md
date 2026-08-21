@@ -59,7 +59,7 @@ ccs apply  --checkout-dir ~/claude/my-config
 Then, day to day:
 
 ```bash
-git -C <checkout> pull        # what your other machines sent
+git -C <checkout> pull        # what your other machines sent (ccs status says when this is due)
 ccs status                    # what differs, and which side owns each change
 ccs merge                     # files that changed on BOTH sides -- your diff tool decides
 ccs apply                     # the rest: checkout INTO the live tree (originals backed up)

@@ -17,10 +17,10 @@ Three locations, and the distinction that matters: **your live config is what Cl
 ```bash
 export CCS_CHECKOUT_DIR=~/claude/my-config      # or pass --checkout-dir every time
 
-# 1. get what other machines sent
+# 1. get what other machines sent -- `ccs status` tells you when this is due
 git -C "$CCS_CHECKOUT_DIR" pull
 
-# 2. look before you leap -- nothing is touched
+# 2. look before you leap -- nothing is touched (it fetches, so "in sync" means the remote)
 ccs status
 
 # 3. reconcile anything that changed on BOTH sides (see below)
@@ -40,7 +40,7 @@ git -C "$CCS_CHECKOUT_DIR" commit -m "config: ..."
 git -C "$CCS_CHECKOUT_DIR" push
 ```
 
-Steps 1 and 6 are plain git. ccs does not wrap them, because git is already good at them and hiding them would obscure where your config actually lives.
+Steps 1 and 6 are plain git. ccs does not wrap them, because git is already good at them and hiding them would obscure where your config actually lives. What ccs does do is tell you when step 1 is due: `status` fetches the upstream before it reads the branch line (remote-tracking refs only -- nothing you own changes), so `in sync with origin/main` is a claim about the remote, `2 behind vs origin/main -- git pull` means exactly that, and if the fetch cannot run it says `pull status unknown` rather than guessing. `apply` and `collect` print the same note when the checkout is behind and carry on; `--require-current` makes them refuse instead. `--no-fetch` (or `fetch: false` in `~/claude/ccs-config.json`) skips the network and labels the line `as last fetched`.
 
 ## Why step 3 exists
 

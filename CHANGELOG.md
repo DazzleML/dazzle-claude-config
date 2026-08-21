@@ -4,6 +4,17 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-08-21
+
+`ccs status` now looks at the remote before it says "in sync". The first two-machine round trip read `in sync with origin/main` only because the operator had run `git fetch` by hand minutes earlier: the line came from `git status -sb`, which compares against whatever the last fetch left behind, and nothing in ccs had ever fetched. A stale tracking ref makes every checkout read as current -- the same confident-claim-without-evidence this tool spent 0.4.1 removing one layer down.
+
+### Added
+- **`status` fetches the upstream first.** One `git fetch` per run, against the branch's own remote, touching remote-tracking refs only -- no local branch, no index, no working tree, so `status` stays read-only and is safe mid-edit. The branch line then says `2 behind vs origin/main -- git pull`, and the verdict refuses to call the tree clean while a pull is waiting: `status: live matches the checkout -- but the checkout is 2 behind origin/main`, exit 1. When the fetch cannot run, the negative is withheld rather than faked: `pull status unknown -- fetch failed: could not resolve host (vs origin/main as last fetched)`. A fetch that would prompt for credentials fails fast instead (non-interactive by construction), and a stalled remote hits a timeout (15 s by default) rather than hanging a read-only verb.
+- **`--no-fetch`**, and `fetch` / `fetch_timeout` in `~/claude/ccs-config.json` (or `CCS_FETCH` / `CCS_FETCH_TIMEOUT`), for air-gapped or metered machines. With fetching off, the line is labelled: `in sync with origin/main as last fetched`.
+- **`apply` and `collect` say when the checkout is behind** -- `note: checkout is 1 behind origin/main -- applying what is here; git pull first for the other machine's latest` -- and proceed. Nothing is lost either way, and "install what I have here, now" is a legitimate intent. **`--require-current`** (or `require_current` in the config) turns the note into a refusal for anyone who wants the pull-first loop enforced; a *failed* fetch never refuses, even then, because a tool that stops working when the network is down is not a sync tool.
+
+ccs still does not pull or push. It tells you whether you need to.
+
 ## [0.4.1] - 2026-08-21
 
 The base problem, finished as far as history can finish it. `ccs` has to guess which commit a live tree was last synced to -- nothing records it -- and every verdict about "who changed this file" rests on that guess. This release fixes three ways the guess was wrong, makes `status` show its evidence, and stops the one-way verbs from copying in the wrong direction. Measured on a real month-old drift: 21 files the tool called "changed on both sides" were untouched on the live side; 3 it called two-sided were untouched on the checkout side; zero actually needed a merge.
@@ -184,7 +195,9 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.2.3...v0.3.0

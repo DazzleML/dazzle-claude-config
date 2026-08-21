@@ -45,6 +45,23 @@ DEFAULTS = {
     # The line budget "auto" spends before collapsing. Raise it if you would
     # rather always see every file; lower it on a small terminal.
     "status_max_lines": 30,
+
+    # Fetch the upstream before reading the branch line, so "in sync with
+    # origin/main" is a claim about the remote and not about the last fetch.
+    # Touches remote-tracking refs only. False for air-gapped or metered
+    # machines; --no-fetch does the same for one run.
+    "fetch": True,
+
+    # Seconds before a fetch is treated as failed ("pull status unknown").
+    # One repo, one remote: 15 s is generous for GitHub and short enough
+    # that a dead network does not make `status` feel hung.
+    "fetch_timeout": 15,
+
+    # When the checkout is behind its upstream, apply/collect WARN and proceed
+    # by default -- "install what I have here, now" is a legitimate intent and
+    # nothing is lost. True turns the warning into a refusal (exit 1) for
+    # users who want the pull-first loop enforced. --require-current per run.
+    "require_current": False,
 }
 
 ENV_MAP = {
@@ -54,6 +71,9 @@ ENV_MAP = {
     "interactive": "CCS_INTERACTIVE",
     "status_detail": "CCS_STATUS_DETAIL",
     "status_max_lines": "CCS_STATUS_MAX_LINES",
+    "fetch": "CCS_FETCH",
+    "fetch_timeout": "CCS_FETCH_TIMEOUT",
+    "require_current": "CCS_REQUIRE_CURRENT",
 }
 
 VALID_ON_DIVERGENCE = {"prompt", "skip", "force"}
@@ -67,8 +87,13 @@ def config_path(user_claude: Path | None = None) -> Path:
 
 
 def _coerce(key: str, raw: str):
-    if key == "interactive":
-        return raw.strip().lower() not in ("0", "false", "no", "off")
+    if key in ("interactive", "fetch", "require_current"):
+        return str(raw).strip().lower() not in ("0", "false", "no", "off")
+    if key == "fetch_timeout":
+        try:
+            return max(1, int(str(raw).strip()))
+        except (TypeError, ValueError):
+            return DEFAULTS["fetch_timeout"]
     if key == "status_max_lines":
         # Environment values arrive as strings; a bad one must not crash
         # `status`, so fall back to the built-in rather than raising.

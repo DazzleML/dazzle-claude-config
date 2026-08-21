@@ -6,6 +6,7 @@ the user's home directory, and it exposes NO branch-switching operations.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -82,6 +83,61 @@ class CheckoutRepo:
     def branch_info(self) -> str:
         rc, out, _ = _run(["status", "-sb"], cwd=self.path)
         return out.splitlines()[0] if rc == 0 and out else "?"
+
+    def upstream(self) -> str | None:
+        """`origin/main`-style name of the tracking branch, or None."""
+        rc, out, _ = _run(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+                          cwd=self.path)
+        return out.strip() if rc == 0 and out.strip() else None
+
+    def fetch(self, timeout: int = 15) -> tuple[bool | None, str]:
+        """Refresh the remote-tracking ref the branch line is measured against.
+
+        Returns (ok, detail): (True, "") on success; (False, reason) on any
+        failure -- timeout, offline, auth -- with git's first stderr line kept
+        so the user can tell those apart; (None, "no upstream") when there is
+        nothing to fetch against.
+
+        Why this exists: `status` read `git status -sb`, which compares against
+        whatever the LAST fetch left behind, and printed "in sync with
+        origin/main" -- a claim about the remote that nothing had checked
+        (2026-08-21, the first two-machine round trip; the line was true only
+        because the operator had fetched by hand). A fetch touches remote-
+        tracking refs only: no local branch, no index, no working tree, so
+        `status` stays read-only in every sense that matters.
+
+        Non-interactive by construction: GIT_TERMINAL_PROMPT=0 and
+        GCM_INTERACTIVE=never turn a would-be credential prompt into a fast
+        failure instead of a hang inside a read-only verb; the timeout is the
+        backstop for a remote that accepts the connection and stalls.
+        """
+        up = self.upstream()
+        if not up:
+            return None, "no upstream"
+        remote = up.split("/", 1)[0]
+        env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
+        try:
+            r = subprocess.run(["git", "fetch", remote, "--quiet", "--prune"],
+                               cwd=str(self.path), capture_output=True, text=True,
+                               env=env, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return False, f"timed out after {timeout}s"
+        if r.returncode != 0:
+            first = next((l for l in (r.stderr or r.stdout).splitlines() if l.strip()), "")
+            return False, first.strip() or f"git fetch exited {r.returncode}"
+        return True, ""
+
+    def ahead_behind(self) -> tuple[int | None, int | None]:
+        """(ahead, behind) relative to the upstream; (None, None) without one."""
+        up = self.upstream()
+        if not up:
+            return None, None
+        rc, out, _ = _run(["rev-list", "--left-right", "--count", f"HEAD...{up}"],
+                          cwd=self.path)
+        if rc != 0 or not out.strip():
+            return None, None
+        a, b = out.split()
+        return int(a), int(b)
 
     def pull(self) -> str:
         rc, out, err = _run(["pull", "--no-rebase"], cwd=self.path)
