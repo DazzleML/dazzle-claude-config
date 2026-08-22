@@ -519,6 +519,23 @@ def _remote_state(repo, cfg, args):
     return fetched, detail, behind
 
 
+def _print_honoured(v) -> None:
+    """The deletions a three-way merge honoured, per side, with the first
+    line of each region. This is informational on a right base and the
+    TRIPWIRE on a wrong one: a box that sees its own section heading under
+    "retired upstream" has merged against a base that never held it."""
+    labels = {"ours": "retired upstream (theirs deleted since base)",
+              "theirs": "retired here (you deleted since base)"}
+    for side, regions in v.honoured.items():
+        n = sum(len(r) for r in regions)
+        print(c("dim", f"    {labels[side]}: {n} line(s) in "
+                       f"{len(regions)} region(s)"))
+        for reg in regions[:6]:
+            print(c("dim", f"      - {reg[0].strip()[:90]}"))
+        if len(regions) > 6:
+            print(c("dim", f"      ... and {len(regions) - 6} more region(s)"))
+
+
 def _gated_matches(manifest, box, pred) -> list[str]:
     """Entries the tag/os gate kept off this box that `pred(repo)` would have
     reached -- so a miss can say "not for this box" instead of "no such
@@ -953,9 +970,19 @@ def main(argv: list[str] | None = None) -> int:
                       + c("dim", "-- nothing validated, nothing installed"))
             for item in r.resumed:
                 print(f"{c('dim', 'resumed')} {item.label} -- kept your prior edits")
+            loss_by_item = {id(i): v for i, v in r.accepted_with_loss}
+            honoured_by_item = {id(i): v for i, v in r.honoured}
             for item in r.resolved:
                 verb = "merged and installed" if args.accept else "merged (not installed)"
                 print(f"{c('green', verb)}: {item.label}")
+                v = honoured_by_item.get(id(item))
+                if v is not None:
+                    _print_honoured(v)
+                v = loss_by_item.get(id(item))
+                if v is not None:
+                    n = sum(len(x) for x in v.lost.values())
+                    print(c("yellow", f"    with {n} line(s) dropped on your say-so "
+                                      "(no base; you reviewed the file)"))
             for item, v in r.unresolved:
                 print(f"{c('bold_red', 'NOT INSTALLED')} {item.label}")
                 for f in v.failures:

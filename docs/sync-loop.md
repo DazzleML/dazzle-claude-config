@@ -84,6 +84,21 @@ ccs merge --only dotclaude/CLAUDE.md --accept    # install, originals backed up 
 
 Nothing is installed until you pass `--accept`, and nothing is installed at all if validation finds content from either side missing from the result.
 
+"Missing" is judged against the ancestor. A line one side *added* that the result lacks is loss, and the merge is refused. A line that was in the ancestor and that the *other* side deleted since is a deletion the merge honours -- the payload retired a rule, or this box dropped a section it never wanted -- and the install prints what it honoured, per side, with the first line of each region:
+
+```
+merged and installed: CLAUDE.md
+    retired upstream (theirs deleted since base): 48 line(s) in 4 region(s)
+      - ## Postmortem Commands
+      - ### File Editing Workflow
+    retired here (you deleted since base): 25 line(s) in 7 region(s)
+      - ## Windows Development Environment
+```
+
+Read that list. On a right base it is a receipt; on a wrong one it is the alarm -- if a heading you wrote on this box appears under "retired upstream", the merge ran against an ancestor that never held it, and the result should not be accepted.
+
+With no ancestor at all the tool cannot tell a deliberate deletion from an accident, but the person who just resolved the file can: if the only problem is dropped lines and you resolved the file yourself, `merge` prints those lines and asks `install it anyway? [y/N]`. Unattended runs never say yes.
+
 ## Checking that a step did what it said
 
 ```bash

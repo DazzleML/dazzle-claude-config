@@ -126,7 +126,7 @@ def test_result_identical_to_ours_is_rejected_without_probes(tmp_path):
     out.write_bytes(item.live.read_bytes())          # exactly ours
     res = merge.validate(item, out)                   # note: no probes
     assert not res.ok
-    assert any("only in theirs were dropped" in f for f in res.failures)
+    assert any("only in theirs are missing" in f for f in res.failures)
 
 
 def test_result_identical_to_theirs_is_rejected_without_probes(tmp_path):
@@ -136,7 +136,7 @@ def test_result_identical_to_theirs_is_rejected_without_probes(tmp_path):
     out.write_bytes(item.repo.read_bytes())          # exactly theirs
     res = merge.validate(item, out)
     assert not res.ok
-    assert any("only in ours were dropped" in f for f in res.failures)
+    assert any("only in ours are missing" in f for f in res.failures)
 
 
 def test_identical_sides_do_not_trigger_the_identity_check(tmp_path):
