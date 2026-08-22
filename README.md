@@ -108,6 +108,21 @@ Two settings in `ccs-manifest.json` cover that, and they do different jobs:
 
 It defaults to off, so a private payload you sync with yourself behaves as it always has. The first `collect` against an entry the checkout carries nothing for is treated as adoption and its files are added regardless -- otherwise a first run would be a silent no-op.
 
+### Files that belong to one machine
+
+Some files are one box's own: its operating manual, a hook only it runs. An entry can say so with `tags`, and each box declares what it is in `~/claude/ccs-box.json`:
+
+```jsonc
+// ccs-manifest.json
+{"repo": "machines/prod-vps/machine.md", "territory": "userclaude",
+ "target": "claude-config/machine.md", "strategy": "copy", "tags": ["prod-vps"]}
+
+// ~/claude/ccs-box.json, on that box only
+{"name": "prod-vps", "tags": ["prod-vps", "production"]}
+```
+
+The entry applies only where **every** tag it names is declared, and the same rule gates `collect`, so a box without the tag cannot stage the file into the shared checkout by accident. Tags are names you choose, not hostnames. No box file means no tags, which switches tagged entries *off*; `ccs status --long` lists what the gate kept off this box and why. The older `os` key (`windows` / `posix`) works the same way for platform files, and the two combine.
+
 ## Where things live
 
 ccs moves files between exactly three locations. The distinction that matters: **your live config is what Claude Code reads; the checkout is a git clone that Claude Code never looks at.**

@@ -16,8 +16,9 @@ from .gitops import CheckoutRepo, GitError, GitopsSafetyError
 from .manifest import Manifest, ManifestError
 from .platform_info import default_checkout_dir, territory_roots
 from .render import c
-from . import userconfig
-from .syncmap import _normalize_eol, diff_all, files_differ, line_stats
+from . import boxconfig, userconfig
+from .syncmap import (_normalize_eol, diff_all, entry_gate_reason, files_differ,
+                      line_stats)
 
 EXIT_CLEAN, EXIT_DRIFT, EXIT_ERROR = 0, 1, 2
 
@@ -438,7 +439,7 @@ def _two_way_fallback(lv, rp, target, repo_label, tool) -> int:
     return EXIT_DRIFT
 
 
-def _print_file_diff(all_diffs, wanted: str) -> int:
+def _print_file_diff(all_diffs, wanted: str, manifest=None, box=None) -> int:
     """`ccs diff <path>`: print the line-by-line difference for one file.
 
     The printed counterpart of `--difftool`, sharing its path resolution so the
@@ -459,9 +460,16 @@ def _print_file_diff(all_diffs, wanted: str) -> int:
         _print_ambiguous(e)
         return EXIT_ERROR
     if found is None:
-        print(c("red", f"no such file in any manifest entry: {wanted!r}")
-              + c("dim", " -- run `ccs diff` with no argument to list what differs"),
-              file=sys.stderr)
+        hidden = _gated_matches(manifest, box, lambda r: _suffix_match(r, want)
+                                or want.startswith(r.rstrip("/") + "/"))             if manifest is not None else []
+        if hidden:
+            print(c("red", f"not for this box: {wanted!r}")
+                  + c("dim", " -- its entry is gated off here: " + "; ".join(hidden)),
+                  file=sys.stderr)
+        else:
+            print(c("red", f"no such file in any manifest entry: {wanted!r}")
+                  + c("dim", " -- run `ccs diff` with no argument to list what differs"),
+                  file=sys.stderr)
         return EXIT_ERROR
     lv, rp, target, repo = found
     left = _normalize_eol(rp.read_bytes()) if rp.is_file() else b""
@@ -511,8 +519,34 @@ def _remote_state(repo, cfg, args):
     return fetched, detail, behind
 
 
+def _gated_matches(manifest, box, pred) -> list[str]:
+    """Entries the tag/os gate kept off this box that `pred(repo)` would have
+    reached -- so a miss can say "not for this box" instead of "no such
+    entry". The gate runs upstream of every verb; without this, a typo and
+    a missing tag print the same words."""
+    tags = box.tags if box is not None else frozenset()
+    out = []
+    for e in manifest.entries:
+        if e.strategy == "plugins" or not pred(e.repo):
+            continue
+        why = entry_gate_reason(e, tags)
+        if why:
+            out.append(f"{e.repo} (needs {why})")
+    return out
+
+
+def _warn_only_miss(args, manifest, box) -> None:
+    hidden = _gated_matches(manifest, box, lambda r: r.startswith(args.only))
+    if hidden:
+        print(c("yellow", f"warning: --only {args.only!r} matches only entries "
+                          f"this box is not tagged for: " + "; ".join(hidden)))
+    else:
+        print(c("yellow", f"warning: --only {args.only!r} matched no manifest entries"))
+
+
 def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None,
-                  remote=(render.UNSPECIFIED, "", None)) -> None:
+                  remote=(render.UNSPECIFIED, "", None),
+                  manifest=None, box=None) -> None:
     """The status report, written for someone who has not read the docs.
 
     Three legs, because that is what "in sync" actually means here:
@@ -554,6 +588,20 @@ def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None,
           f"{c('dim', '(userclaude)')}")
     print(f"{c('bold', 'compared')}  {render.n_files(files)} across "
           f"{render.n_entries(len(all_diffs))} of live config vs the checkout")
+    # Entries the gate kept off this box, with the reason, so "why is my
+    # file not syncing" is answered on screen rather than by reading the
+    # manifest. Shown only in the long form -- it is explanation, not drift.
+    if manifest is not None and (cfg or {}).get('status_detail') == 'long':
+        tags = box.tags if box is not None else frozenset()
+        gated = [(e.repo, entry_gate_reason(e, tags))
+                 for e in manifest.entries if e.strategy != 'plugins']
+        gated = [(r, why) for r, why in gated if why]
+        if gated:
+            label = f"box {box.name}" if box is not None and box.name else "this box"
+            declared = ', '.join(sorted(tags)) if tags else 'none'
+            print(f"{c('bold', 'not for')}   {label} {c('dim', f'(tags declared: {declared})')}")
+            for r, why in gated:
+                print(f"          {c('dim', r)} {c('dim', '-- needs ' + why)}")
 
     cfg = cfg or {}
     detail = cfg.get("status_detail", "auto")
@@ -697,6 +745,12 @@ def main(argv: list[str] | None = None) -> int:
         # touches remote-tracking refs only; a failure is reported, never
         # fatal -- ccs must keep working offline.
         cfg = userconfig.load(roots.get('USER_CLAUDE'))
+        # BOX. What this machine declares itself to be (~/claude/ccs-box.json).
+        # Tag-gated entries apply and collect only where every tag is
+        # declared; a missing or broken file means no tags, never all.
+        box = boxconfig.load(roots.get('USER_CLAUDE'))
+        for err in box.errors:
+            print(c('yellow', f'warning: box config: {err}'))
         fetched, fetch_detail, behind = (render.UNSPECIFIED, "", None)
         if args.verb in ("status", "collect", "apply"):
             fetched, fetch_detail, behind = _remote_state(repo, cfg, args)
@@ -737,7 +791,7 @@ def main(argv: list[str] | None = None) -> int:
             # Measured 2026-08-21: 3 live-ahead and 22 checkout-ahead files on
             # one machine -- either verb alone would have clobbered one set.
             if repo is not None:
-                for d in diff_all(manifest, checkout, roots):
+                for d in diff_all(manifest, checkout, roots, box.tags):
                     if d.mismatch or not d.modified:
                         continue
                     for rel in d.modified:
@@ -772,7 +826,8 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.verb == "collect":
             r = collect(manifest, checkout, roots, repo=repo, dry_run=args.dry_run,
-                        only=args.only, add=args.add, skip=wrong_dir)
+                        only=args.only, add=args.add, skip=wrong_dir,
+                        box_tags=box.tags)
             for rel, why in r.skipped:
                 print(f"{c('dim', 'skipped')} {rel} {c('dim', '-- ' + why)}")
             for rel, pattern in r.refused_denied:
@@ -802,7 +857,7 @@ def main(argv: list[str] | None = None) -> int:
             if r.git_ignored or r.failed or r.mismatched:
                 return EXIT_ERROR
             if args.only and r.only_matched == 0:
-                print(c("yellow", f"warning: --only {args.only!r} matched no manifest entries"))
+                _warn_only_miss(args, manifest, box)
             for rel in r.adopted_entries:
                 print(c("cyan", "ADOPTING") +
                       f": {rel} -- the checkout carried nothing here, so its files "
@@ -829,7 +884,7 @@ def main(argv: list[str] | None = None) -> int:
             r = apply(manifest, checkout, roots, backups, repo=repo,
                       dry_run=args.dry_run, only=args.only,
                       sync_removals=args.sync_removals,
-                      skip=wrong_dir)
+                      skip=wrong_dir, box_tags=box.tags)
             for rel, why in r.skipped:
                 print(f"{c('dim', 'skipped')} {rel} {c('dim', '-- ' + why)}")
             for rel, pattern in r.refused_denied:
@@ -859,7 +914,7 @@ def main(argv: list[str] | None = None) -> int:
             if r.backup_dir:
                 print(c("dim", f"backups: {r.backup_dir}"))
             if args.only and r.only_matched == 0:
-                print(c("yellow", f"warning: --only {args.only!r} matched no manifest entries"))
+                _warn_only_miss(args, manifest, box)
             if not (r.copied or r.seeded or r.removals_staged or r.refused_denied):
                 print(c("green", "apply: nothing to do") +
                       " -- your live config already matches the checkout")
@@ -933,7 +988,7 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_DRIFT if r.refused else EXIT_CLEAN
 
         # status / diff
-        all_diffs = diff_all(manifest, checkout, roots)
+        all_diffs = diff_all(manifest, checkout, roots, box.tags)
         diffs = [d for d in all_diffs if not d.clean]
         if args.verb == "status":
             over = {}
@@ -943,7 +998,8 @@ def main(argv: list[str] | None = None) -> int:
                 over['status_detail'] = 'compact'
             _print_status(checkout, repo, roots, all_diffs, diffs,
                           userconfig.load(roots.get('USER_CLAUDE'), over),
-                          remote=(fetched, fetch_detail, behind))
+                          remote=(fetched, fetch_detail, behind),
+                          manifest=manifest, box=box)
             # Behind the upstream is drift too: the checkout is not the
             # latest the fleet has, even when live matches it exactly.
             return EXIT_CLEAN if not diffs and not behind else EXIT_DRIFT
@@ -958,7 +1014,7 @@ def main(argv: list[str] | None = None) -> int:
                                                  getattr(args, 'tool', None),
                                                  ways=ways, checkout=checkout,
                                                  roots=roots, repo=repo)
-                return _print_file_diff(all_diffs, wanted)
+                return _print_file_diff(all_diffs, wanted, manifest, box)
             for d in diffs:
                 if d.mismatch:
                     print(c("red", f"mismatch:   {d.entry.repo} ({d.mismatch})"))

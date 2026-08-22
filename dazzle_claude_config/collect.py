@@ -41,11 +41,12 @@ class CollectResult:
 def collect(manifest: Manifest, checkout: Path, roots: dict[str, Path],
             repo: CheckoutRepo | None = None, dry_run: bool = False,
             only: str | None = None, add: bool = False,
-            skip: dict[str, str] | None = None) -> CollectResult:
+            skip: dict[str, str] | None = None,
+            box_tags=frozenset()) -> CollectResult:
     result = CollectResult()
     copied_repo_rels: list[str] = []
 
-    for d in diff_all(manifest, checkout, roots):
+    for d in diff_all(manifest, checkout, roots, box_tags):
         if only and not d.entry.repo.startswith(only):
             continue
         result.only_matched += 1

@@ -26,7 +26,11 @@ _IMPLICIT_MARKERS = {"CLAUDE.md", "skills", "commands", "agents", "settings.json
 
 _TOP_KEYS = {"manifest_version", "description", "territories", "entries",
              "collect_exclude", "deny", "hold_additions"}
-_ENTRY_KEYS = {"repo", "territory", "target", "strategy", "overlays", "vars", "os"}
+_ENTRY_KEYS = {"repo", "territory", "target", "strategy", "overlays", "vars", "os",
+               "tags"}
+#: The only values `os` may take. An unknown value used to parse fine and then
+#: never apply anywhere -- a typo silently removed the entry from every box.
+VALID_OS = {"windows", "posix"}
 _TERRITORY_KEYS = {"root_var", "repo_dir"}
 
 
@@ -43,6 +47,9 @@ class Entry:
     overlays: list[str] = field(default_factory=list)
     vars: list[str] = field(default_factory=list)
     os: str | None = None
+    # Declared box tags this entry requires, ALL of them (see boxconfig).
+    # Empty means "every box", which is what every pre-tags entry meant.
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -157,10 +164,20 @@ class Manifest:
                 if e["territory"] not in territories:
                     raise ManifestError(
                         f"entry {i}: unknown territory {e['territory']!r}")
+            os_val = e.get("os")
+            if os_val is not None and os_val not in VALID_OS:
+                raise ManifestError(
+                    f"entry {i}: invalid os {os_val!r} (valid: {sorted(VALID_OS)})")
+            tags: list[str] = []
+            if "tags" in e:
+                from .boxconfig import validate_tags
+                tags, errs = validate_tags(e["tags"], f"entry {i}")
+                if errs:
+                    raise ManifestError("; ".join(errs))
             entries.append(Entry(
                 repo=e["repo"], strategy=strategy, territory=e.get("territory"),
                 target=e.get("target"), overlays=list(e.get("overlays") or []),
-                vars=list(e.get("vars") or []), os=e.get("os")))
+                vars=list(e.get("vars") or []), os=os_val, tags=tags))
 
         return cls(
             version=version,

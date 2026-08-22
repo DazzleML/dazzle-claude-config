@@ -43,7 +43,8 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
           backup_root: Path, repo: CheckoutRepo | None = None,
           dry_run: bool = False, only: str | None = None,
           sync_removals: bool = False,
-          skip: dict[str, str] | None = None) -> ApplyResult:
+          skip: dict[str, str] | None = None,
+          box_tags=frozenset()) -> ApplyResult:
     """`skip` maps a target path (`skills/x.md`) to a reason. Files whose LIVE
     copy is ahead of the checkout have nothing to apply -- copying would revert
     the user's own edits -- so the CLI passes them here, attributed through
@@ -56,7 +57,7 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
     result = ApplyResult()
     session = BackupSession(backup_root)
 
-    for d in diff_all(manifest, checkout, roots):
+    for d in diff_all(manifest, checkout, roots, box_tags):
         if only and not d.entry.repo.startswith(only):
             continue
         result.only_matched += 1
@@ -118,7 +119,7 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
                 result.removals_pending.append(display)
 
     for entry in manifest.seed_entries():
-        if not entry_applies(entry):
+        if not entry_applies(entry, box_tags):
             continue
         if only and not entry.repo.startswith(only):
             continue

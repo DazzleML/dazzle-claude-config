@@ -124,8 +124,25 @@ class EntryDiff:
                     or self.mismatch)
 
 
-def entry_applies(entry: Entry) -> bool:
-    return entry.os is None or entry.os == os_key()
+def entry_applies(entry: Entry, box_tags=frozenset()) -> bool:
+    """Is this entry for this box? Its `os` must match and every tag it
+    requires must be declared in the box's tags (boxconfig). The one
+    predicate gates BOTH directions -- status, apply and collect all go
+    through it -- so a tag-gated file is never spread by a box that lacks
+    the tag. No tags given = no tag-gated entry applies: the safe default."""
+    if entry.os is not None and entry.os != os_key():
+        return False
+    return set(entry.tags) <= set(box_tags)
+
+
+def entry_gate_reason(entry: Entry, box_tags=frozenset()) -> str | None:
+    """Why `entry_applies` said no, for status output; None when it applies."""
+    if entry.os is not None and entry.os != os_key():
+        return f"os: {entry.os}"
+    missing = sorted(set(entry.tags) - set(box_tags))
+    if missing:
+        return "tags: " + ", ".join(missing)
+    return None
 
 
 def entry_bases(entry: Entry, checkout: Path, roots: dict[str, Path],
@@ -198,8 +215,8 @@ def diff_entry(entry: Entry, checkout: Path, roots: dict[str, Path],
 
 
 def diff_all(manifest: Manifest, checkout: Path,
-             roots: dict[str, Path]) -> list[EntryDiff]:
+             roots: dict[str, Path], box_tags=frozenset()) -> list[EntryDiff]:
     return [
         diff_entry(e, checkout, roots, manifest)
-        for e in manifest.copy_entries() if entry_applies(e)
+        for e in manifest.copy_entries() if entry_applies(e, box_tags)
     ]

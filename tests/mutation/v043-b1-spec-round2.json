@@ -1,0 +1,49 @@
+{
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "tests/test_tags_gate.py",
+  "tests/test_manifest.py"
+ ],
+ "mutations": [
+  {
+   "id": "M4",
+   "file": "dazzle_claude_config/boxconfig.py",
+   "original": "    env = os.environ.get(ENV_TAGS)\n    if env is not None:",
+   "mutated": "    env = os.environ.get(ENV_TAGS)\n    if env:",
+   "note": "None-vs-truthiness: empty CCS_BOX_TAGS no longer clears the file's tags"
+  },
+  {
+   "id": "M6",
+   "file": "dazzle_claude_config/boxconfig.py",
+   "original": "                    if isinstance(name, str) and TAG_RE.match(name):",
+   "mutated": "                    if isinstance(name, str):",
+   "note": "Box name accepted without token validation"
+  },
+  {
+   "id": "M7",
+   "file": "dazzle_claude_config/boxconfig.py",
+   "original": "    if path.exists():\n        return path\n    path.parent.mkdir(parents=True, exist_ok=True)",
+   "mutated": "    if path.is_dir():\n        return path\n    path.parent.mkdir(parents=True, exist_ok=True)",
+   "note": "Never-overwrite guard broken in write_template"
+  },
+  {
+   "id": "M8",
+   "file": "dazzle_claude_config/boxconfig.py",
+   "original": "    body = {\"name\": name, \"tags\": [name] if name else []}",
+   "mutated": "    body = {\"name\": name, \"tags\": [name]}",
+   "note": "Template with no name writes tags [null]"
+  },
+  {
+   "id": "M11",
+   "file": "dazzle_claude_config/manifest.py",
+   "original": "            if os_val is not None and os_val not in VALID_OS:",
+   "mutated": "            if os_val is not None and os_val.lower() not in VALID_OS:",
+   "note": "Validation normalizes but storage does not: 'Windows' passes, never matches"
+  }
+ ]
+}

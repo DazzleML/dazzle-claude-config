@@ -125,3 +125,4 @@ At that point the only thing left is `git push`, and the checkout is the same on
 | The manifest is an allowlist | a file not listed never moves, in either direction |
 | Credentials are refused on the way in | `.credentials.json`, `.claude.json`, `settings.local.json`, `*.db`, `history.jsonl` and credential-shaped content, regardless of what the manifest says |
 | A file only in your live config is left alone | reported as `local only`, never as a pending removal |
+| A file tagged for one box never spreads | an entry with `tags` applies -- and collects -- only on a box whose `~/claude/ccs-box.json` declares every tag; no box file means the entry is off |

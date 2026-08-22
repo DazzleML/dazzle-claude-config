@@ -1,0 +1,98 @@
+{
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "tests/test_tags_gate.py",
+  "tests/test_manifest.py"
+ ],
+ "mutations": [
+  {
+   "id": "M1",
+   "file": "dazzle_claude_config/boxconfig.py",
+   "original": "        return set(wanted) <= self.tags",
+   "mutated": "        return set(wanted) >= self.tags",
+   "note": "Subset direction flipped in has_all"
+  },
+  {
+   "id": "M2",
+   "file": "dazzle_claude_config/boxconfig.py",
+   "original": "TAG_RE = re.compile(r\"^[a-z0-9][a-z0-9._-]*$\")",
+   "mutated": "TAG_RE = re.compile(r\"^[a-z0-9][a-z0-9._-]*\")",
+   "note": "Dropped end anchor: prefix match widens accepted tags"
+  },
+  {
+   "id": "M3",
+   "file": "dazzle_claude_config/boxconfig.py",
+   "original": "        if not isinstance(t, str) or not TAG_RE.match(t):",
+   "mutated": "        if not isinstance(t, str):",
+   "note": "Regex check dropped from validate_tags"
+  },
+  {
+   "id": "M4",
+   "file": "dazzle_claude_config/boxconfig.py",
+   "original": "    env = os.environ.get(ENV_TAGS)\n    if env is not None:",
+   "mutated": "    env = os.environ.get(ENV_TAGS)\n    if env:",
+   "note": "None-vs-truthiness: empty CCS_BOX_TAGS no longer clears the file's tags"
+  },
+  {
+   "id": "M5",
+   "file": "dazzle_claude_config/boxconfig.py",
+   "original": "            [t.strip() for t in env.split(\",\") if t.strip()], ENV_TAGS)",
+   "mutated": "            [t for t in env.split(\",\") if t], ENV_TAGS)",
+   "note": "Dropped normalization: 'a, b' yields ' b'"
+  },
+  {
+   "id": "M6",
+   "file": "dazzle_claude_config/boxconfig.py",
+   "original": "                    if isinstance(name, str) and TAG_RE.match(name):",
+   "mutated": "                    if isinstance(name, str):",
+   "note": "Box name accepted without token validation"
+  },
+  {
+   "id": "M7",
+   "file": "dazzle_claude_config/boxconfig.py",
+   "original": "    if path.exists():\n        return path\n    path.parent.mkdir(parents=True, exist_ok=True)",
+   "mutated": "    if path.is_dir():\n        return path\n    path.parent.mkdir(parents=True, exist_ok=True)",
+   "note": "Never-overwrite guard broken in write_template"
+  },
+  {
+   "id": "M8",
+   "file": "dazzle_claude_config/boxconfig.py",
+   "original": "    body = {\"name\": name, \"tags\": [name] if name else []}",
+   "mutated": "    body = {\"name\": name, \"tags\": [name]}",
+   "note": "Template with no name writes tags [null]"
+  },
+  {
+   "id": "M9",
+   "file": "dazzle_claude_config/syncmap.py",
+   "original": "    return set(entry.tags) <= set(box_tags)",
+   "mutated": "    return not entry.tags or bool(set(entry.tags) & set(box_tags))",
+   "note": "Any-instead-of-all"
+  },
+  {
+   "id": "M10",
+   "file": "dazzle_claude_config/syncmap.py",
+   "original": "    missing = sorted(set(entry.tags) - set(box_tags))",
+   "mutated": "    missing = sorted(set(box_tags) - set(entry.tags))",
+   "note": "Swapped set difference in gate reason"
+  },
+  {
+   "id": "M11",
+   "file": "dazzle_claude_config/manifest.py",
+   "original": "            if os_val is not None and os_val not in VALID_OS:",
+   "mutated": "            if os_val is not None and os_val.lower() not in VALID_OS:",
+   "note": "Validation normalizes but storage does not: 'Windows' passes, never matches"
+  },
+  {
+   "id": "M12",
+   "file": "dazzle_claude_config/manifest.py",
+   "original": "                if errs:\n                    raise ManifestError(\"; \".join(errs))",
+   "mutated": "                if errs:\n                    tags = []",
+   "note": "Malformed manifest tags no longer raise; entry becomes ungated"
+  }
+ ]
+}

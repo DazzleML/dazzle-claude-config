@@ -4,6 +4,12 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+### Added
+- **Manifest entries can be limited to the boxes that declare a tag.** An entry with `"tags": ["prod-vps"]` applies only on a machine whose `~/claude/ccs-box.json` declares that tag -- and `collect` honours the same rule, so a file that belongs to one box is never staged into the shared checkout by a box that lacks the tag. Tags are names you choose, not hostnames. A missing box file means no tags, which switches tagged entries off; a malformed one is reported and also means no tags, so a broken declaration can only narrow what syncs, never widen it. `ccs status --long` lists the entries the gate kept off this box and why (`not for box devbox ... -- needs tags: prod-vps`). `CCS_BOX_TAGS` overrides the file for one run. This is the mechanism behind per-machine files (`machines/<name>/`) and opt-in addenda, which until now were directory conventions the tool never read.
+
+### Fixed
+- **A typo in an entry's `os` is refused instead of silently never applying.** `"os": "linux"` or `"os": "Windows"` used to parse fine and then match no machine at all, removing the entry from every box without a word. Only `windows` and `posix` are accepted now.
+
 ## [0.4.2] - 2026-08-21
 
 `ccs status` now looks at the remote before it says "in sync". The first two-machine round trip read `in sync with origin/main` only because the operator had run `git fetch` by hand minutes earlier: the line came from `git status -sb`, which compares against whatever the last fetch left behind, and nothing in ccs had ever fetched. A stale tracking ref makes every checkout read as current -- the same confident-claim-without-evidence this tool spent 0.4.1 removing one layer down.
