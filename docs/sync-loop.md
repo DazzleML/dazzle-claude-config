@@ -99,6 +99,29 @@ Read that list. On a right base it is a receipt; on a wrong one it is the alarm 
 
 With no ancestor at all the tool cannot tell a deliberate deletion from an accident, but the person who just resolved the file can: if the only problem is dropped lines and you resolved the file yourself, `merge` prints those lines and asks `install it anyway? [y/N]`. Unattended runs never say yes.
 
+### Adopting a box that forked before the payload existed
+
+A machine whose `CLAUDE.md` split off a year ago has no ancestor in the checkout's history, and a two-way merge of two 1000-line files is a bad afternoon. The ancestor usually exists somewhere -- the home repo of the machine that seeded the box, say. Hand it over and check what the merge would do with it first:
+
+```bash
+ccs merge --only dotclaude/CLAUDE.md --base-from C:/Users/me:.claude/CLAUDE.md --dry-run   # nothing written
+# would merge: CLAUDE.md
+#  #  origin    base              d(ours) d(theirs)  phantom  hunks | ours: silent retired lost | theirs: silent ours-del lost | verdict
+#  1  supplied  52768c4:.claude/..    143       794  exempt     24 |     15      15    0 |     29       29    0 | USABLE  conflict-on-delete on
+#  2  inferred  (none)  nearest 8d21783 rejected ...                                                           | NO BASE  rule 4: ...
+# base: use 52768c4:.claude/CLAUDE.md -- 24 hunk(s) to review; 0 line(s) lost; 15 line(s) of yours retired upstream (theirs wins)
+```
+
+`lost` is the number to read: a side's own additions missing from both the clean output and every hunk. It must be 0. `retired` / `ours-del` are deletions the other side made on purpose since the ancestor; the hunks are where you decide about each one -- a supplied base is merged **conflict-on-delete**, so a region the payload removed that this box still carries is shown as a hunk with an empty theirs pane rather than dropped.
+
+```bash
+ccs merge --only dotclaude/CLAUDE.md --base-from C:/Users/me:.claude/CLAUDE.md           # resolve the 24 hunks in your tool
+ccs merge --only dotclaude/CLAUDE.md --base-from C:/Users/me:.claude/CLAUDE.md --accept  # live only; the checkout stays at HEAD
+#   adoption merge: checkout left at HEAD; record 52768c4:.claude/CLAUDE.md as this box's base for CLAUDE.md
+```
+
+One base is one file's ancestor, so the run must be scoped to one file with `--only`.
+
 ## Checking that a step did what it said
 
 ```bash

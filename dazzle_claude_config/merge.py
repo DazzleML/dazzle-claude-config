@@ -96,6 +96,14 @@ class MergeItem:
     reason: str | None = None  # set when the item is refused rather than merged
     sibling: tuple | None = None  # (path, sha, n, ratio) -- nearest historical
                                   # version, REJECTED as a base but worth a look
+    # ADOPTION: the base came from outside the checkout (--base-file /
+    # --base-from). A supplied base is a fact, not an estimate: the phantom
+    # check does not run on it, the seed uses conflict-on-delete so nothing
+    # the payload removed vanishes silently, and --accept writes LIVE ONLY
+    # (see _write_back). `base_label` names the source for the record line.
+    base_supplied: bool = False
+    base_label: str = ""
+    cod: object | None = None      # basefind.CodStats once seeded
 
     @property
     def mergeable(self) -> bool:
@@ -135,7 +143,8 @@ class ValidationResult:
 
 def plan(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
          theirs_from: str = "head", stage: Path | None = None,
-         base_mode: str = "auto") -> list[MergeItem]:
+         base_mode: str = "auto", base_override: bytes | None = None,
+         base_label: str = "") -> list[MergeItem]:
     """Enumerate what needs merging, refusing what must not be merged.
 
     Covers BOTH territories (dotclaude -> ~/.claude, userclaude -> ~/claude)
@@ -164,7 +173,8 @@ def plan(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
     # 2-way for a file that had a perfectly good ancestor available.
     items: list[MergeItem] = []
     if theirs_from == "head":
-        items.extend(_head_items(manifest, checkout, roots, items, stage, base_mode))
+        items.extend(_head_items(manifest, checkout, roots, items, stage, base_mode,
+                                 base_override=base_override, base_label=base_label))
     seen = {i.label for i in items}
     for d in diff_all(manifest, checkout, roots):
         items.extend(i for i in _items_for_diff(d) if i.label not in seen)
@@ -199,7 +209,8 @@ def _head_candidates(manifest: Manifest, checkout: Path, roots: dict[str, Path])
 
 def _head_items(manifest: Manifest, checkout: Path, roots: dict[str, Path],
                 already: list[MergeItem], stage: Path | None,
-                base_mode: str = "auto") -> list[MergeItem]:
+                base_mode: str = "auto", base_override: bytes | None = None,
+                base_label: str = "") -> list[MergeItem]:
     """Files whose live content differs from the COMMITTED blob -- single-file
     entries and directory-entry members alike (see _head_candidates).
 
@@ -229,8 +240,21 @@ def _head_items(manifest: Manifest, checkout: Path, roots: dict[str, Path],
         item.repo = theirs                     # content of theirs (staged)
         item.repo_dest = checkout / repo_path  # where it actually installs
         rej: list = []
-        found = infer_base(checkout, repo_path, live.read_bytes(), p.stdout,
-                           rejected=rej)
+        if base_override is not None:
+            # Supplied from outside the checkout. Not inferred, not phantom-
+            # checked: the check is one-directional (it cannot see bases from
+            # the box's own lineage) and rejects the correct recorded base
+            # whenever a box deleted >= 3 shared lines. The loss table and
+            # the reviewer are the judgement instead.
+            base_f = stage / (theirs.stem + ".base-SUPPLIED")
+            base_f.write_bytes(base_override)
+            item.base = base_f
+            item.base_supplied = True
+            item.base_label = base_label
+            found = None
+        else:
+            found = infer_base(checkout, repo_path, live.read_bytes(), p.stdout,
+                               rejected=rej)
         if found is not None:
             blob, sha = found
             base_f = stage / (theirs.stem + f".base-{sha}")
@@ -587,7 +611,8 @@ def resolve_tool(explicit: str | None = None) -> str:
 # Seeding and validation
 # --------------------------------------------------------------------------
 
-def seed(item: MergeItem, merged: Path, union: bool = False) -> int:
+def seed(item: MergeItem, merged: Path, union: bool = False,
+         cod_ratio: float | None = None) -> int:
     """Write the starting point for the output pane; return the conflict count.
 
     With a base this is a real 3-way. WITHOUT a base there is genuinely no
@@ -604,6 +629,23 @@ def seed(item: MergeItem, merged: Path, union: bool = False) -> int:
         if p_ is not None and not p_.is_file():
             raise MergeError(f"{role} input not found: {p_}")
 
+    if item.base_supplied and not union:
+        # CONFLICT-ON-DELETE. A correct three-way merge against a true
+        # ancestor silently drops every region the payload removed while this
+        # box kept it -- on a box with its own manual, exactly the lines
+        # nobody wants gone. Strip those regions from the base, merge, then
+        # wrap each one that landed in the clean output as a reviewer hunk.
+        # Measured: 166 silent lines -> 24 hunks, 0 lost.
+        from . import basefind
+        ours_l = basefind.lines_of(item.live.read_bytes())
+        base_l = basefind.lines_of(item.base.read_bytes())
+        theirs_l = basefind.lines_of(item.repo.read_bytes())
+        out, stats = basefind.conflict_on_delete(
+            ours_l, base_l, theirs_l, merged.parent / (merged.name + ".inputs"),
+            cod_ratio if cod_ratio is not None else basefind.DEFAULT_RATIO)
+        merged.write_bytes("\n".join(out).encode("utf-8"))
+        item.cod = stats
+        return stats.hunks
     if item.base is None:
         if not union:
             merged.write_bytes(item.live.read_bytes())
@@ -773,8 +815,15 @@ def validate(item: MergeItem, merged: Path,
         # Dropping a regressed pattern is the POINT, not a loss. The hints tell
         # the user to prefer the side without it; flagging its absence as
         # missing content would have the tool contradicting its own advice.
+        # A line that is PRESENT in the result -- anywhere -- was not lost. The
+        # opcode walk pairs lines by position, so a reviewer who moved a line
+        # past its neighbour showed up as one delete plus one insert and was
+        # charged with losing a line they had merely reordered (tester run-01).
+        present = {l.strip() for l in res_lines if l.strip()}
+
         def _counts(l: str) -> bool:
             return (l.strip() not in other_lines
+                    and l.strip() not in present
                     and not any(pat in l for pat in regressed))
         dropped = [l for l in dropped if _counts(l)]
         # HONOURED DELETION. With a base, a line that is in the base and absent
@@ -812,7 +861,10 @@ def validate(item: MergeItem, merged: Path,
     # a paragraph present in ours and theirs can land twice. Only substantial
     # lines are checked -- blanks, fences and short list markers legitimately
     # repeat throughout a document.
-    merged_lines = [l.strip() for l in text.splitlines() if len(l.strip()) > 40]
+    # Skip while markers remain: a hunk legitimately shows a region twice (the
+    # ours and base panes), and the marker failure above already says it all.
+    has_markers = any(f.startswith("unresolved conflict markers") for f in res.failures)
+    merged_lines = [] if has_markers else         [l.strip() for l in text.splitlines() if len(l.strip()) > 40]
     from collections import Counter
     mc = Counter(merged_lines)
     oc = Counter(l.strip() for l in _text_of(item.live).splitlines() if len(l.strip()) > 40)
@@ -877,6 +929,8 @@ class MergeResult:
     accepted_with_loss: list[tuple[MergeItem, ValidationResult]] = field(default_factory=list)
     # Resolved items whose validation honoured deletions (see ValidationResult).
     honoured: list[tuple[MergeItem, ValidationResult]] = field(default_factory=list)
+    # Supplied-base items installed live-only (the checkout stays at HEAD).
+    adopted: list[MergeItem] = field(default_factory=list)
 
 
 def two_way_labels(manifest: Manifest, checkout: Path,
@@ -951,7 +1005,8 @@ def run(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
         only: str | None = None, probes: dict[str, str] | None = None,
         union: bool = False, launch_tool: bool = True,
         preview: bool = False, base_mode: str = "auto",
-        confirm_loss=None) -> MergeResult:
+        confirm_loss=None, base_override: bytes | None = None,
+        base_label: str = "", cod_ratio: float | None = None) -> MergeResult:
     """Plan, seed, validate and (optionally) hand off each divergent file.
 
     `confirm_loss(item, validation) -> bool` is asked, once per file, when a
@@ -970,9 +1025,25 @@ def run(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
     ws.mkdir(parents=True, exist_ok=True)
     res.workspace = ws
 
-    items = plan(manifest, checkout, roots, stage=ws, base_mode=base_mode)
+    items = plan(manifest, checkout, roots, stage=ws, base_mode=base_mode,
+                 base_override=base_override, base_label=base_label)
     if only:
         items = [i for i in items if i.entry.repo.startswith(only)]
+    if base_override is not None and union:
+        raise MergeError("--union keeps both sides without review, which is the opposite "
+                         "of an adoption merge: a supplied base is merged conflict-on-delete "
+                         "so every removal is a hunk you decide. Drop --union.")
+    if base_override is not None:
+        # One base is one file's ancestor. Applying it to several files would
+        # hand every other file a wrong base with the phantom check switched
+        # off -- refuse unless the run is scoped to exactly one.
+        supplied = [i for i in items if i.base_supplied]
+        if len(supplied) != 1:
+            raise MergeError(
+                f"--base-file/--base-from is one file's ancestor, but this run "
+                f"covers {len(supplied)} merge candidates"
+                + (": " + ", ".join(i.label for i in supplied[:6]) if supplied else "")
+                + " -- scope it with --only <entry/path>")
 
     res.refused = [i for i in items if not i.mergeable]
     mergeable = [i for i in items if i.mergeable]
@@ -1001,7 +1072,7 @@ def run(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
         stamp = merged.parent / (merged.name + ".seed")
         if not merged.exists() or (stamp.exists()
                                    and not _differs_bytes(merged, stamp)):
-            seed(item, merged, union=union)   # absent, or untouched since seeding
+            seed(item, merged, union=union, cod_ratio=cod_ratio)   # absent, or untouched
             stamp.write_bytes(merged.read_bytes())
         else:
             res.resumed.append(item)          # human edits present: keep them
@@ -1030,8 +1101,10 @@ def run(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
             res.honoured.append((item, v))
         if accept:
             bdir = roots["USER_CLAUDE"] / "backups" / "ccs-merge"
-            _write_back(item, merged, bdir)
+            _write_back(item, merged, bdir, live_only=item.base_supplied)
             res.backup_dir = bdir
+            if item.base_supplied:
+                res.adopted.append(item)
         res.resolved.append(item)
     return res
 
@@ -1064,8 +1137,13 @@ def _dominant_eol(blob: bytes) -> bytes:
 
 
 def _write_back(item: MergeItem, merged: Path,
-                backup_dir: Path | None = None) -> None:
+                backup_dir: Path | None = None, live_only: bool = False) -> None:
     """Install a VALIDATED merge on both sides. Never called before validate().
+
+    `live_only` is the ADOPTION case (a supplied base): the checkout stays at
+    HEAD. Installing a keep box's merge into the checkout would publish its
+    own sections to every other box and make them the next inferred base --
+    the exact mechanism that deletes them on the following merge.
 
     Writes to `repo_dest`, NOT `repo`. On the HEAD axis `repo` is the staged
     copy of theirs inside the merge workspace, so writing there installed
@@ -1095,8 +1173,10 @@ def _write_back(item: MergeItem, merged: Path,
                 (backup_dir / f"{safe}.{role}.bak").write_bytes(src.read_bytes())
 
     item.live.parent.mkdir(parents=True, exist_ok=True)
-    dest_repo.parent.mkdir(parents=True, exist_ok=True)
     item.live.write_bytes(blob)
+    if live_only:
+        return
+    dest_repo.parent.mkdir(parents=True, exist_ok=True)
     dest_repo.write_bytes(blob)
 
 

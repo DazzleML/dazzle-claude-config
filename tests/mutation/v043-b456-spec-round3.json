@@ -1,0 +1,21 @@
+{
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "tests/test_adoption_merge.py",
+  "tests/test_honoured_deletion.py"
+ ],
+ "mutations": [
+  {
+   "id": "M10",
+   "file": "dazzle_claude_config/basefind.py",
+   "original": "    yset = {l.strip() for l in y}\n    bset = {l.strip() for l in base} if base is not None else set()\n",
+   "mutated": "    yset = {l for l in y}\n    bset = {l.strip() for l in base} if base is not None else set()\n",
+   "note": "Dropped .strip() on the other side"
+  }
+ ]
+}

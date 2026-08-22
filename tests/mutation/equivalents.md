@@ -26,3 +26,15 @@ git hash-object (first 12). Only separated-generation runs (modes 1-2) write her
   `... and not shown.stdout:`. **don't-care** -- the two differ only for an
   EMPTY committed file (rc 0, empty stdout); `infer_base` skips empty blobs,
   so both paths end in non-attribution. (2026-08-21, mode 1.)
+
+## dazzle_claude_config/basefind.py @ dd3c133d6ee9
+
+- M4 (v0.4.3 sweep): `Region(..., [ours[b2o[i]] ...])` -> `[base[i] ...]`.
+  **equivalent** -- `b2o` is built from `equal` opcodes only, so every mapped
+  ours line is byte-identical to its base line; the region text is the same
+  list either way. (2026-08-22, mode 1.)
+- M5 (v0.4.3 sweep): `if any(mask[at:at+n])` -> `if all(...)` in
+  `wrap_clean_regions`. **equivalent** -- a region is found by `_find` as a
+  contiguous run of its own lines, none of which is a marker line, so its span
+  can never cross a hunk boundary; the mask is therefore uniform over the span
+  and `any` == `all`. (2026-08-22, mode 1.)

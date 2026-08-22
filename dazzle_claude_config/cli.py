@@ -73,6 +73,13 @@ day to day, once it is installed:
   marks those entries; `ccs merge --preview` shows you the three versions in
   your own diff tool before you commit to anything.
 
+  A machine whose file forked BEFORE the payload existed has no ancestor in
+  the checkout. Hand the merge one, and look before you leap:
+    ccs merge --only dotclaude/CLAUDE.md --base-from <repo>@<sha>:.claude/CLAUDE.md --dry-run   # which ancestor; what it would let go of (`lost` must be 0)
+    ccs merge --only dotclaude/CLAUDE.md --base-from <repo>@<sha>:.claude/CLAUDE.md             # every removal is a hunk you decide
+    ccs merge --only dotclaude/CLAUDE.md --base-from <repo>@<sha>:.claude/CLAUDE.md --accept    # installs the live file only
+  (<repo> is usually the home repo of the machine that seeded the box.)
+
   Preferences (diff tool, status verbosity, AI merge command) live in
   ~/claude/ccs-config.json; each is also a per-run flag and an env var.
 
@@ -90,8 +97,13 @@ day to day, once it is installed:
                       ("diff", "list per-file differences")):
         sp = sub.add_parser(verb, help=doc)
         _add_common(sp, suppress=True)
-        if verb in ("collect", "apply", "merge"):
+        if verb in ("collect", "apply"):
             sp.add_argument("--dry-run", action="store_true")
+        if verb == "merge":
+            sp.add_argument("--dry-run", action="store_true",
+                            help="list what would merge and, per file, which ancestor "
+                                 "it would use and what that ancestor would let go of "
+                                 "(the loss table; `lost` must be 0). Nothing is written")
         if verb in ("collect", "apply"):
             sp.add_argument("--force", action="store_true",
                             help="copy even files that changed on BOTH sides "
@@ -135,6 +147,25 @@ day to day, once it is installed:
             sp.add_argument("--no-launch", action="store_true",
                             help="produce and validate the merged file without "
                                  "opening a diff tool")
+        if verb in ("merge", "diff"):
+            sp.add_argument("--base-file", default=None, metavar="FILE",
+                            help="use FILE as the common ancestor instead of "
+                                 "inferring one from the checkout's history -- for "
+                                 "ADOPTING a box whose file forked before the payload "
+                                 "existed. One file only: scope merge with --only")
+            sp.add_argument("--base-from", default=None, metavar="REPO[@SHA]:PATH",
+                            help="like --base-file, but read the ancestor out of "
+                                 "another git repository (SHA defaults to HEAD)")
+        if verb == "merge":
+            sp.add_argument("--block-swap-ratio", default=None, type=float,
+                            metavar="R",
+                            help="with a supplied base: a region the payload "
+                                 "REPLACED counts as a removal (and becomes a "
+                                 "reviewer hunk) when fewer than half its lines have "
+                                 "an R-similar line in the replacement. Higher R = "
+                                 "more rewrites treated as removals = more hunks to "
+                                 "review; lower R = fewer. Default 0.6; plateau "
+                                 "0.45-0.70 on the real file")
         if verb == "status":
             g = sp.add_mutually_exclusive_group()
             g.add_argument("--long", action="store_true",
@@ -332,7 +363,7 @@ def _resolve_pair(all_diffs, want: str):
     return None
 
 
-def _launch_file_difftool(all_diffs, wanted: str, tool: str | None, *,
+def _launch_file_difftool(all_diffs, wanted: str, tool: str | None, *, supplied=None,
                           ways: int = 2, checkout=None, roots=None, repo=None) -> int:
     """Open one file in the user's own diff tool.
 
@@ -362,7 +393,8 @@ def _launch_file_difftool(all_diffs, wanted: str, tool: str | None, *,
         return EXIT_CLEAN
     lv, rp, target, repo_label = found
     if ways == 3:
-        return _launch_three_way(lv, rp, target, repo_label, tool, checkout, roots, repo)
+        return _launch_three_way(lv, rp, target, repo_label, tool, checkout, roots, repo,
+                                 supplied=supplied)
     repo = repo_label
     # A file present on only one side is an ADD or a REMOVE, and looking at
     # it is exactly what you want -- refusing to open it answers a question
@@ -385,7 +417,8 @@ def _launch_file_difftool(all_diffs, wanted: str, tool: str | None, *,
     return EXIT_CLEAN if same else EXIT_DRIFT
 
 
-def _launch_three_way(lv, rp, target, repo_label, tool, checkout, roots, repo) -> int:
+def _launch_three_way(lv, rp, target, repo_label, tool, checkout, roots, repo,
+                      supplied=None) -> int:
     """live | base | checkout in the user's mergetool, read-only.
 
     The base is whatever `infer_base` picks -- the same call `status` and the
@@ -405,7 +438,10 @@ def _launch_three_way(lv, rp, target, repo_label, tool, checkout, roots, repo) -
     shown = subprocess.run(["git", "show", f"HEAD:{repo_label}"], cwd=str(checkout),
                            capture_output=True)
     theirs = shown.stdout if shown.returncode == 0 else b""
-    found = merge.infer_base(checkout, repo_label, lv.read_bytes(), theirs) if theirs else None
+    if supplied is not None and supplied[0] is not None:
+        found = (supplied[0], "supplied")          # a fact, not an estimate
+    else:
+        found = merge.infer_base(checkout, repo_label, lv.read_bytes(), theirs) if theirs else None
     if found is None:
         why = ("the path was never committed" if not theirs
                else "no ancestor in history attributes this change")
@@ -517,6 +553,114 @@ def _remote_state(repo, cfg, args):
         fetched, detail = repo.fetch(timeout=int((cfg or {}).get("fetch_timeout", 15)))
     _ahead, behind = repo.ahead_behind()
     return fetched, detail, behind
+
+
+def _supplied_base(args) -> tuple[bytes | None, str]:
+    """(blob, label) for --base-file / --base-from, or (None, '')."""
+    from . import basefind
+    bf = getattr(args, "base_file", None)
+    bfrom = getattr(args, "base_from", None)
+    if bf and bfrom:
+        raise merge.MergeError("--base-file and --base-from are alternatives; pass one")
+    if bf:
+        path = Path(bf).expanduser()
+        if not path.is_file():
+            raise merge.MergeError(f"--base-file: not a file: {bf}")
+        return path.read_bytes(), f"file:{path.name}"
+    if bfrom:
+        try:
+            return basefind.read_base_from(bfrom)
+        except ValueError as e:
+            raise merge.MergeError(str(e)) from e
+    return None, ""
+
+
+def _loss_row(tag, origin, label, d_ours, d_theirs, phantom, table, verdict) -> str:
+    o, t = table.ours, table.theirs
+    return (f" {tag:<2} {origin:<9} {label:<28} {d_ours:>7} {d_theirs:>9}  {phantom:<7} "
+            f"{table.hunks:>5} | {o.silent:>6} {o.honoured:>7} {o.lost:>4} | "
+            f"{t.silent:>6} {t.honoured:>8} {t.lost:>4} | {verdict}")
+
+
+_LOSS_HEAD = (" #  origin    base                          d(ours) d(theirs)  phantom  "
+              "hunks | ours: silent retired lost | theirs: silent ours-del lost | verdict")
+
+
+def _print_base_table(item, checkout, roots, supplied: tuple, ratio) -> None:
+    """`merge --dry-run`: per file, the table that is the oracle for a merge.
+
+    One row per candidate base -- the supplied one (phantom-exempt) and the
+    inferred one (with the phantom verdict the guard would give it, or the
+    rule-4 rejection) -- each with the hunk count the merge would produce and
+    the per-side loss numbers. `lost` is the one that must be 0: it counts a
+    side's own additions missing from both the clean output and every hunk,
+    which no base can legitimately cause. Same code `merge` seeds from, so
+    the table and the merge cannot disagree.
+    """
+    from . import basefind
+    repo_label = f"{item.entry.repo}/{item.rel}" if item.rel else item.entry.repo
+    ours_b = item.live.read_bytes() if item.live.is_file() else b""
+    theirs_b = item.repo.read_bytes() if item.repo.is_file() else b""
+    if not ours_b or not theirs_b:
+        print(c("dim", "    (one side is absent; nothing to attribute)"))
+        return
+    ours_l, theirs_l = basefind.lines_of(ours_b), basefind.lines_of(theirs_b)
+    ws = merge.workspace_for(roots) / "plan"
+    ws.mkdir(parents=True, exist_ok=True)
+    ratio = ratio if ratio is not None else basefind.DEFAULT_RATIO
+    print(c("dim", _LOSS_HEAD))
+    rows = 0
+    usable = None
+    blob, label = supplied
+    if blob is not None:
+        base_l = basefind.lines_of(blob)
+        out, stats = basefind.conflict_on_delete(ours_l, base_l, theirs_l, ws / "supplied", ratio)
+        table = basefind.loss_table(ours_l, theirs_l, base_l, out)
+        verdict = "USABLE  conflict-on-delete on" if table.lost == 0 else "TOOL BUG  lost != 0"
+        rows += 1
+        print(_loss_row(rows, "supplied", label[:28], basefind.distance(base_l, ours_l),
+                        basefind.distance(base_l, theirs_l), "exempt", table, verdict))
+        usable = usable or (table.lost == 0 and (label, table, stats))
+    rej: list = []
+    inferred = merge.infer_base(checkout, repo_label, ours_b, theirs_b, rejected=rej)
+    rows += 1
+    if inferred is not None:
+        base_b, sha = inferred
+        base_l = basefind.lines_of(base_b)
+        pr, pn = merge.base_phantom_ratio(base_b, ours_b, theirs_b)
+        out, rc = basefind.merge_file_diff3(ours_l, base_l, theirs_l, ws / "inferred")
+        table = basefind.loss_table(ours_l, theirs_l, base_l, out)
+        verdict = "USABLE  (history)" if table.lost == 0 else "TOOL BUG  lost != 0"
+        print(_loss_row(rows, "inferred", f"{sha}  checkout history", basefind.distance(base_l, ours_l),
+                        basefind.distance(base_l, theirs_l), f"{pr:.2f}/{pn}", table, verdict))
+        usable = usable or (table.lost == 0 and (sha, table, None))
+    elif rej:
+        _, sha, n, pr = rej[0]
+        print(f" {rows:<2} inferred  (none)  nearest {sha} rejected   {'--':>7} {'--':>9}  "
+              f"{pr:.2f}/{n:<4} {'--':>5} | {'--':>6} {'--':>7} {'--':>4} | {'--':>6} {'--':>8} {'--':>4} "
+              f"| NO BASE  rule 4: nearest ({sha}) is a sibling, not an ancestor")
+    else:
+        print(f" {rows:<2} inferred  (none)  checkout history           {'--':>7} {'--':>9}  "
+              f"{'--':<7} {'--':>5} | {'--':>6} {'--':>7} {'--':>4} | {'--':>6} {'--':>8} {'--':>4} "
+              f"| NO BASE  nothing in history attributes this change")
+    if usable:
+        label, table, stats = usable
+        o, t = table.ours, table.theirs
+        line = (f"  base: use {label} -- {table.hunks} hunk(s) to review; {table.lost} line(s) lost; "
+                f"{o.honoured} line(s) of yours retired upstream (theirs wins)")
+        if o.first_honoured:
+            line += f": first {o.first_honoured[:50]!r}"
+        print(c("green", line))
+        if t.honoured:
+            print(c("dim", f"        {t.honoured} theirs line(s) stay deleted (you removed them since base)"
+                           + (f": first {t.first_honoured[:50]!r}" if t.first_honoured else "")))
+        if stats is not None:
+            print(c("dim", f"        conflict-on-delete: {stats.regions} removed region(s), "
+                           f"{stats.region_lines} base line(s); {stats.natural} natural + "
+                           f"{stats.wrapped} wrapped hunk(s) ({stats.in_hunk} inside natural hunks)"))
+    else:
+        print(c("yellow", "  base: none usable -- supply one with --base-file / --base-from, "
+                          "or merge two-way (no base)"))
 
 
 def _print_honoured(v) -> None:
@@ -945,14 +1089,27 @@ def main(argv: list[str] | None = None) -> int:
                 else EXIT_CLEAN
 
         if args.verb == "merge":
+            blob, label = _supplied_base(args)
             r = merge.run(manifest, checkout, roots, tool=args.tool,
                           dry_run=args.dry_run, accept=args.accept, only=args.only,
                           union=args.union, launch_tool=not args.no_launch,
-                          preview=args.preview, base_mode=args.base)
+                          preview=args.preview, base_mode=args.base,
+                          base_override=blob, base_label=label,
+                          cod_ratio=args.block_swap_ratio)
+            for item in (i for i in r.resolved + r.previewed + [i for i, _ in r.unresolved]
+                         if i.base_supplied and i.cod is not None):
+                st = item.cod
+                print(c("cyan", f"supplied base {item.base_label}: {item.label}")
+                      + c("dim", f" -- {st.hunks} hunk(s) to review ({st.natural} natural + "
+                                 f"{st.wrapped} wrapped from {st.regions} region(s) the payload "
+                                 f"removed since the base)"))
             for item in r.refused:
                 print(f"{c('yellow', 'refused')} {item.label} {c('dim', '-- ' + item.reason)}")
             for item in r.planned:
                 print(f"{c('magenta', 'would merge')}: {item.label}")
+                if repo is not None:
+                    _print_base_table(item, checkout, roots, (blob, label),
+                                      args.block_swap_ratio)
             for item in r.siblings:
                 sib, sha, n, ratio = item.sibling
                 used = " (USED as --base sibling)" if item.base == sib else ""
@@ -972,9 +1129,15 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{c('dim', 'resumed')} {item.label} -- kept your prior edits")
             loss_by_item = {id(i): v for i, v in r.accepted_with_loss}
             honoured_by_item = {id(i): v for i, v in r.honoured}
+            adopted = {id(i) for i in r.adopted}
             for item in r.resolved:
                 verb = "merged and installed" if args.accept else "merged (not installed)"
+                if id(item) in adopted:
+                    verb = "merged and installed LIVE ONLY"
                 print(f"{c('green', verb)}: {item.label}")
+                if id(item) in adopted:
+                    print(c("yellow", f"    adoption merge: checkout left at HEAD; record "
+                                      f"{item.base_label} as this box's base for {item.label}"))
                 v = honoured_by_item.get(id(item))
                 if v is not None:
                     _print_honoured(v)
@@ -1040,7 +1203,8 @@ def main(argv: list[str] | None = None) -> int:
                     return _launch_file_difftool(all_diffs, wanted,
                                                  getattr(args, 'tool', None),
                                                  ways=ways, checkout=checkout,
-                                                 roots=roots, repo=repo)
+                                                 roots=roots, repo=repo,
+                                                 supplied=_supplied_base(args))
                 return _print_file_diff(all_diffs, wanted, manifest, box)
             for d in diffs:
                 if d.mismatch:

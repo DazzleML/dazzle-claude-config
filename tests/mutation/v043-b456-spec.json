@@ -1,0 +1,112 @@
+{
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "tests/test_adoption_merge.py",
+  "tests/test_honoured_deletion.py"
+ ],
+ "mutations": [
+  {
+   "id": "M1",
+   "file": "dazzle_claude_config/basefind.py",
+   "original": "    return hits < len(bl) / 2\n",
+   "mutated": "    return hits <= len(bl) / 2\n",
+   "note": "Block-swap threshold boundary"
+  },
+  {
+   "id": "M2",
+   "file": "dazzle_claude_config/basefind.py",
+   "original": "        difflib.SequenceMatcher(None, b, t, autojunk=False).ratio() >= ratio for t in tl))\n",
+   "mutated": "        difflib.SequenceMatcher(None, b, t, autojunk=False).ratio() > ratio for t in tl))\n",
+   "note": "Similarity boundary >= -> >"
+  },
+  {
+   "id": "M3",
+   "file": "dazzle_claude_config/basefind.py",
+   "original": "        if all(i in b2o for i in range(i1, i2)) and any(base[i].strip() for i in range(i1, i2)):\n            out.append(Region(i1, i2, [ours[b2o[i]] for i in range(i1, i2)]))\n",
+   "mutated": "        if any(i in b2o for i in range(i1, i2)) and any(base[i].strip() for i in range(i1, i2)):\n            out.append(Region(i1, i2, [ours[b2o.get(i, i)] for i in range(i1, i2)]))\n",
+   "note": "all->any: partly-kept region accepted"
+  },
+  {
+   "id": "M4",
+   "file": "dazzle_claude_config/basefind.py",
+   "original": "            out.append(Region(i1, i2, [ours[b2o[i]] for i in range(i1, i2)]))\n",
+   "mutated": "            out.append(Region(i1, i2, [base[i] for i in range(i1, i2)]))\n",
+   "note": "Region text from base, not ours"
+  },
+  {
+   "id": "M5",
+   "file": "dazzle_claude_config/basefind.py",
+   "original": "        if any(mask[at:at + len(r.ours)]):\n            todo.append((at, None))\n            continue\n",
+   "mutated": "        if all(mask[at:at + len(r.ours)]):\n            todo.append((at, None))\n            continue\n",
+   "note": "any->all: straddling region wrapped instead of in_hunk"
+  },
+  {
+   "id": "M6",
+   "file": "dazzle_claude_config/basefind.py",
+   "original": "            out += [OURS_MARK, *r.ours, BASE_MARK, *r.ours, SEP_MARK, THEIRS_MARK]\n",
+   "mutated": "            out += [OURS_MARK, *r.ours, BASE_MARK, SEP_MARK, THEIRS_MARK]\n",
+   "note": "Wrapped hunk loses its base pane"
+  },
+  {
+   "id": "M7",
+   "file": "dazzle_claude_config/basefind.py",
+   "original": "        if at < 0:\n            missing += 1\n            continue\n",
+   "mutated": "        if at < 0:\n            continue\n",
+   "note": "missing not counted"
+  },
+  {
+   "id": "M8",
+   "file": "dazzle_claude_config/basefind.py",
+   "original": "        if bmark is not None and not any(x.strip() for x in base_p):\n",
+   "mutated": "        if bmark is not None and not all(x.strip() for x in base_p):\n",
+   "note": "any->all: non-empty base pane with a blank overwritten"
+  },
+  {
+   "id": "M9",
+   "file": "dazzle_claude_config/basefind.py",
+   "original": "                if _find(ours_p, r.ours) >= 0:\n                    found += r.ours\n",
+   "mutated": "                if _find(theirs_p, r.ours) >= 0:\n                    found += r.ours\n",
+   "note": "Wrong pane searched; base pane never repaired"
+  },
+  {
+   "id": "M10",
+   "file": "dazzle_claude_config/basefind.py",
+   "original": "    yset = {l.strip() for l in y}\n    bset = {l.strip() for l in base} if base is not None else set()\n",
+   "mutated": "    yset = {l for l in y}\n    bset = {l.strip() for l in base} if base is not None else set()\n",
+   "note": "Dropped .strip() on the other side"
+  },
+  {
+   "id": "M11",
+   "file": "dazzle_claude_config/basefind.py",
+   "original": "        if l.strip() in bset:\n            res.honoured += 1\n            res.first_honoured = res.first_honoured or l.strip()\n        else:\n            res.lost += 1\n            res.first_lost = res.first_lost or l.strip()\n",
+   "mutated": "        if l.strip() not in bset:\n            res.honoured += 1\n            res.first_honoured = res.first_honoured or l.strip()\n        else:\n            res.lost += 1\n            res.first_lost = res.first_lost or l.strip()\n",
+   "note": "honoured/lost inverted"
+  },
+  {
+   "id": "M12",
+   "file": "dazzle_claude_config/basefind.py",
+   "original": "        if t != \"equal\":\n            n += (i2 - i1) + (j2 - j1)\n",
+   "mutated": "        if t != \"equal\":\n            n += (i2 - i1)\n",
+   "note": "distance asymmetric"
+  },
+  {
+   "id": "M13",
+   "file": "dazzle_claude_config/merge.py",
+   "original": "            dropped = [l for l in dropped if l.strip() not in base_lines]\n",
+   "mutated": "            dropped = [l for l in dropped if l.strip() in base_lines]\n",
+   "note": "honoured/lost direction flipped in validate"
+  },
+  {
+   "id": "M14",
+   "file": "dazzle_claude_config/merge.py",
+   "original": "        if not v.ok and item.base is None and v.only_loss and human and not union:\n",
+   "mutated": "        if not v.ok and item.base is None and v.only_loss and not union:\n",
+   "note": "human guard removed: untouched seed asked"
+  }
+ ]
+}

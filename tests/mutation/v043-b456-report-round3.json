@@ -1,0 +1,36 @@
+{
+  "harness": {
+    "name": "mutation_sweep.py",
+    "version": "0.1.0"
+  },
+  "environment": {
+    "python": "3.12.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "root": ".",
+    "test_command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "tests/test_adoption_merge.py",
+      "tests/test_honoured_deletion.py"
+    ],
+    "timestamp": "2026-08-22T03:39:48-04:00"
+  },
+  "results": [
+    {
+      "id": "M10",
+      "file": "dazzle_claude_config/basefind.py",
+      "note": "Dropped .strip() on the other side",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    }
+  ],
+  "summary": {
+    "killed": 1
+  },
+  "anomalies": []
+}
