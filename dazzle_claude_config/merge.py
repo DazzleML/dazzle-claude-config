@@ -500,16 +500,41 @@ def _executable_of(cmd: str) -> str | None:
     return parts[0].strip('"') if parts else None
 
 
+# Tools git drives WITHOUT a mergetool.<name>.cmd entry -- its built-ins,
+# whose invocations live in git's own mergetools/ scripts. ccs carries the
+# common terminal and desktop ones so `ccs merge --tool vimdiff` works on a
+# box that has vim and nothing else (a server, typically) with no git config
+# at all. Same $LOCAL/$BASE/$REMOTE/$MERGED contract, expanded by substitute().
+# A configured mergetool.<name>.cmd always wins over this table.
+BUILTIN_TOOLS: dict[str, str] = {
+    # git's vimdiff layout: LOCAL | BASE | REMOTE on top, MERGED below
+    "vimdiff": 'vim -f -d -c "4wincmd w | wincmd J" "$LOCAL" "$BASE" "$REMOTE" "$MERGED"',
+    "nvimdiff": 'nvim -f -d -c "4wincmd w | wincmd J" "$LOCAL" "$BASE" "$REMOTE" "$MERGED"',
+    "meld": 'meld --auto-merge "$LOCAL" "$BASE" "$REMOTE" --output "$MERGED"',
+    "kdiff3": 'kdiff3 --auto "$BASE" "$LOCAL" "$REMOTE" -o "$MERGED"',
+}
+
+
+def tool_command(name: str) -> str | None:
+    """The shell line for a tool: mergetool.<name>.cmd if configured, else
+    the built-in table, else None."""
+    rc, cmd = _git(["config", "--get", f"mergetool.{name}.cmd"])
+    if rc == 0 and cmd:
+        return cmd
+    return BUILTIN_TOOLS.get(name)
+
+
 def _tool_usable(name: str) -> bool:
-    """A configured tool name is only usable if its binary actually exists.
+    """A tool name is only usable if its binary actually exists.
 
     Measured: `merge.tool = bc` resolves to a bare `BCompare.exe` that is NOT
     on PATH, while `diff.tool = bc4` points at a real absolute path. Trusting
     the configured name would fail on the very machine that configured it, so
-    the name is never trusted without a probe (AC-5).
+    the name is never trusted without a probe (AC-5). Built-ins are probed
+    the same way: `vimdiff` is usable only where `vim` is.
     """
-    rc, cmd = _git(["config", "--get", f"mergetool.{name}.cmd"])
-    if rc != 0 or not cmd:
+    cmd = tool_command(name)
+    if not cmd:
         return False
     exe = _executable_of(cmd)
     if not exe:
@@ -582,9 +607,11 @@ def resolve_tool(explicit: str | None = None) -> str:
     """
     if explicit:
         if not _tool_usable(explicit):
+            hint = (f"check `git config mergetool.{explicit}.cmd`"
+                    if explicit not in BUILTIN_TOOLS else
+                    f"`{_executable_of(BUILTIN_TOOLS[explicit])}` is not on PATH")
             raise MergeError(
-                f"merge tool '{explicit}' is configured but its binary was not "
-                f"found; check `git config mergetool.{explicit}.cmd`")
+                f"merge tool '{explicit}' cannot run -- its binary was not found; {hint}")
         return explicit
 
     candidates: list[str] = []
@@ -598,11 +625,17 @@ def resolve_tool(explicit: str | None = None) -> str:
                  for line in out.splitlines() if line.strip()]
         candidates.extend(sorted(set(names), key=lambda n: (-len(n), n)))
 
+    # Built-ins last: a configured tool is an expressed preference, a
+    # built-in is what happens to be installed. Terminal tools before desktop
+    # ones, since the box most likely to have nothing configured is a server.
+    candidates.extend(n for n in BUILTIN_TOOLS if n not in candidates)
+
     for name in candidates:
         if _tool_usable(name):
             return name
     raise MergeError(
-        "no usable merge tool found -- configure one, e.g.\n"
+        "no usable merge tool found -- install one git knows (vim, nvim, meld, "
+        "kdiff3 need no config) or configure one, e.g.\n"
         '  git config --global mergetool.bc4.cmd '
         "'\"C:/path/to/bcomp.exe\" --wait \"$LOCAL\" \"$REMOTE\" \"$BASE\" \"$MERGED\"'")
 
@@ -1245,9 +1278,10 @@ def launch(tool: str, item: MergeItem, merged: Path, base: Path,
         raise MergeError(
             "no console attached -- refusing to launch an interactive merge tool "
             "(resolve manually, or run where a terminal is attached)")
-    rc, cmd = _git(["config", "--get", f"mergetool.{tool}.cmd"])
-    if rc != 0 or not cmd:
-        raise MergeError(f"no mergetool.{tool}.cmd configured")
+    cmd = tool_command(tool)
+    if not cmd:
+        raise MergeError(f"no mergetool.{tool}.cmd configured, and '{tool}' is not a "
+                         f"built-in ({', '.join(BUILTIN_TOOLS)})")
     line = substitute(cmd, item, merged, base)
     # env is still exported so a tool that reads the variables directly works,
     # but correctness must NOT depend on it -- see substitute().

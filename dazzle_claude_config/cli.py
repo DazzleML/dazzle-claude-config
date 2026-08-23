@@ -44,6 +44,51 @@ def _add_common(parser, suppress=False):
                              "reflects the last fetch, and says so (config: fetch)")
 
 
+_MERGE_HELP = dict(
+    formatter_class=argparse.RawDescriptionHelpFormatter,
+    description="Resolve files that differ on BOTH sides in your own diff tool, "
+                "against their common ancestor. Nothing is installed until the "
+                "result is checked for content that went missing, and until "
+                "you pass --accept.",
+    epilog="""the usual loop:
+  ccs merge --dry-run                       # what would merge, and which ancestor each file would use
+  ccs merge --preview                       # look at the three sides in your tool; decide nothing
+  ccs merge                                 # resolve; the result waits in the workspace
+  ccs merge --accept                        # install it on both sides, originals backed up
+
+a machine whose file forked BEFORE the payload existed has no ancestor in the
+checkout. Hand the merge a base, and look before you leap:
+  ccs merge --only dotclaude/CLAUDE.md --base-from <repo>@<sha>:.claude/CLAUDE.md --dry-run
+      # which ancestor; what it would let go of. `lost` must be 0
+  ccs merge --only dotclaude/CLAUDE.md --base-from <repo>@<sha>:.claude/CLAUDE.md
+      # every region the payload removed that this box kept is a hunk you decide
+  ccs merge --only dotclaude/CLAUDE.md --base-from <repo>@<sha>:.claude/CLAUDE.md --accept
+      # installs the LIVE file only; the checkout stays at HEAD
+
+where that <repo>@<sha>:<path> comes from -- the ancestor is the last revision
+BOTH copies descended from: the file as it was when this box was first set up
+from another machine. It is almost always in that other machine's git history:
+  git -C <repo> log --oneline --date=short --format="%h %ad %s" -- .claude/CLAUDE.md
+      # <repo> = the home repo of the machine that seeded this box (many
+      #          people track ~/.claude in one), a backup repo, or the payload
+      #          itself if it is old enough; .claude/CLAUDE.md = the file's path
+      #          inside that repo. Pick the commit from around the day the box
+      #          was set up -- the most recent one BEFORE the two copies diverged.
+  git -C <repo> show <sha>:.claude/CLAUDE.md | head     # eyeball it; it should read like both copies' common past
+  (a copy of that old file on disk works too: --base-file FILE)
+
+how to know you picked the right one -- the --dry-run table:
+  `lost` must be 0 (if it is not, that is a tool bug, not your ancestor); and the
+  first lines it names under "retired upstream" / "ours-del" should be sections
+  you recognise as the OTHER machine's, or as genuinely retired. A heading THIS
+  box wrote showing up as "retired upstream" means the ancestor never held it --
+  wrong revision; try an earlier one.
+
+the long version, with what a wrapped hunk looks like in your tool and what each
+refusal means: docs/merge.md in the ccs repository.
+""")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     # Every verb assumes a checkout already exists, so --help must answer
     # "where do I get one?" -- otherwise the cold start is a dead end.
@@ -74,11 +119,7 @@ day to day, once it is installed:
   your own diff tool before you commit to anything.
 
   A machine whose file forked BEFORE the payload existed has no ancestor in
-  the checkout. Hand the merge one, and look before you leap:
-    ccs merge --only dotclaude/CLAUDE.md --base-from <repo>@<sha>:.claude/CLAUDE.md --dry-run   # which ancestor; what it would let go of (`lost` must be 0)
-    ccs merge --only dotclaude/CLAUDE.md --base-from <repo>@<sha>:.claude/CLAUDE.md             # every removal is a hunk you decide
-    ccs merge --only dotclaude/CLAUDE.md --base-from <repo>@<sha>:.claude/CLAUDE.md --accept    # installs the live file only
-  (<repo> is usually the home repo of the machine that seeded the box.)
+  the checkout; `ccs merge -h` shows how to hand it one.
 
   Preferences (diff tool, status verbosity, AI merge command) live in
   ~/claude/ccs-config.json; each is also a per-run flag and an env var.
@@ -95,7 +136,7 @@ day to day, once it is installed:
                       ("merge", "resolve files that differ on BOTH sides, in your diff tool"),
                       ("status", "three-way drift report (exit 1 when drift)"),
                       ("diff", "list per-file differences")):
-        sp = sub.add_parser(verb, help=doc)
+        sp = sub.add_parser(verb, help=doc, **(_MERGE_HELP if verb == "merge" else {}))
         _add_common(sp, suppress=True)
         if verb in ("collect", "apply"):
             sp.add_argument("--dry-run", action="store_true")

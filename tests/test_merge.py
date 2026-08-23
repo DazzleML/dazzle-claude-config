@@ -916,3 +916,37 @@ def test_difftool_refuses_without_a_console(tmp_path, monkeypatch):
     b = tmp_path / "b"; b.write_bytes(b"y")
     with pytest.raises(merge.MergeError, match="no console attached"):
         merge.launch_difftool("anything", a, b)
+
+
+# --- built-in merge tools (0.4.3): vimdiff & co. need no mergetool.<name>.cmd
+
+def test_builtin_tool_is_usable_when_its_binary_exists(monkeypatch, tmp_path):
+    """`ccs merge --tool vimdiff` on a box with vim and no git config."""
+    fake = tmp_path / "bin"; fake.mkdir()
+    exe = fake / ("vim.exe" if merge.sys.platform == "win32" else "vim")
+    exe.write_text("", encoding="utf-8")
+    if merge.sys.platform != "win32":
+        exe.chmod(0o755)
+    monkeypatch.setenv("PATH", str(fake))
+    monkeypatch.setattr(merge, "_git", lambda args, cwd=None: (1, ""))   # no config at all
+    assert merge._tool_usable("vimdiff")
+    assert merge.resolve_tool("vimdiff") == "vimdiff"
+    assert merge.resolve_tool() == "vimdiff"                             # probed, no explicit
+    assert "$MERGED" in merge.tool_command("vimdiff")
+
+
+def test_builtin_tool_without_its_binary_says_so(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", str(tmp_path))                            # empty PATH
+    monkeypatch.setattr(merge, "_git", lambda args, cwd=None: (1, ""))
+    assert not merge._tool_usable("vimdiff")
+    with pytest.raises(merge.MergeError, match="not on PATH"):
+        merge.resolve_tool("vimdiff")
+    with pytest.raises(merge.MergeError, match="need no config"):
+        merge.resolve_tool()
+
+
+def test_configured_cmd_wins_over_the_builtin(monkeypatch):
+    monkeypatch.setattr(merge, "_git",
+                        lambda args, cwd=None: (0, 'myvim "$LOCAL" "$MERGED"')
+                        if args[-1] == "mergetool.vimdiff.cmd" else (1, ""))
+    assert merge.tool_command("vimdiff") == 'myvim "$LOCAL" "$MERGED"'

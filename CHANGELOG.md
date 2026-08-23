@@ -14,6 +14,7 @@ The release that lets a machine which forked a year ago join the fleet without l
 - **Manifest entries can be limited to the boxes that declare a tag.** An entry with `"tags": ["prod-vps"]` applies only on a machine whose `~/claude/ccs-box.json` declares that tag -- and `collect` honours the same rule, so a file that belongs to one box is never staged into the shared checkout by a box that lacks the tag. Tags are names you choose, not hostnames. A missing box file means no tags, which switches tagged entries off; a malformed one is reported and also means no tags, so a broken declaration can only narrow what syncs, never widen it. `ccs status --long` lists the entries the gate kept off this box and why (`not for box devbox ... -- needs tags: prod-vps`). `CCS_BOX_TAGS` overrides the file for one run. This is the mechanism behind per-machine files (`machines/<name>/`) and opt-in addenda, which until now were directory conventions the tool never read.
 
 ### Changed
+- **`vimdiff`, `nvimdiff`, `meld` and `kdiff3` work with no git configuration.** `ccs merge` used to require a `mergetool.<name>.cmd` entry for every tool, which git's built-ins do not have -- so on a server with vim and nothing else, `merge` stopped with "no usable merge tool found" despite the README's promise. The four common built-ins now carry git's own invocations inside ccs and are probed like any configured tool (usable only where the binary is); a configured entry always wins. `docs/merge.md` is new: what the three sides are, how to read the dry-run table and the install receipt, adopting a machine that forked before the payload existed (including where the ancestor comes from), merging on a box with no GUI, and what each refusal means. `docs/three-way-merge.md` is the primer for anyone who has never resolved one in a visual tool -- the window, the four moves, and what it looks like in Beyond Compare, vimdiff, VS Code and friends.
 - **`--only` matches whole path components and can reach inside an entry.** `--only dotclaude/skills/test-mutation` now scopes `apply`, `collect`, `merge`, the two-sided refusal, `--force`, and the direction skips to that one subtree (or one file) and nothing else; before, `--only` was a string prefix on entry names, so that command matched no entry at all -- silently -- and `--only dotclaude/sk` matched `dotclaude/skills` by accident. A partial component now matches nothing and says so. The two-sided guard also honours box tags: an entry this box is not tagged for is never refused on, since it is never copied.
 
 ### Fixed
@@ -212,7 +213,8 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.3.1...v0.4.0
