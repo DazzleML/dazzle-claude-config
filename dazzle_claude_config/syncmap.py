@@ -124,6 +124,56 @@ class EntryDiff:
                     or self.mismatch)
 
 
+def only_scope(only: str | None, repo: str) -> tuple[bool, str | None]:
+    """Does `--only` reach this entry, and how much of it?
+
+    Component-wise, never a string prefix: `dotclaude/skills` reaches the
+    entry `dotclaude/skills` and everything under `dotclaude/skills/...`, and
+    does NOT reach `dotclaude/skills-extra`. Returns (reached, sub_prefix):
+
+      (True, None)    the whole entry (`--only` names it or a parent of it)
+      (True, "a/b")   only files under a/b inside the entry -- `--only
+                      dotclaude/skills/test-mutation` on the entry
+                      `dotclaude/skills`. Until 0.4.3 this matched nothing,
+                      silently: the filter was `entry.repo.startswith(only)`.
+      (False, None)   not reached
+    """
+    if not only:
+        return True, None
+    o = only.replace(chr(92), "/").strip("/")
+    r = repo.strip("/")
+    if o == r or r.startswith(o + "/"):
+        return True, None
+    if o.startswith(r + "/"):
+        return True, o[len(r) + 1:]
+    return False, None
+
+
+def rel_in_scope(rel: str, sub_prefix: str | None) -> bool:
+    """Is a file (entry-relative path) inside the --only sub-prefix?"""
+    if sub_prefix is None:
+        return True
+    r = rel.replace(chr(92), "/")
+    return r == sub_prefix or r.startswith(sub_prefix + "/")
+
+
+def scope_diff(d: "EntryDiff", sub_prefix: str | None) -> "EntryDiff":
+    """A copy of an EntryDiff with every per-file list cut to the sub-prefix
+    -- so the guard, the direction skips, --force, and the removal
+    candidates all see the same, scoped, set of files."""
+    if sub_prefix is None:
+        return d
+    import dataclasses
+    return dataclasses.replace(
+        d,
+        live_only=[r for r in d.live_only if rel_in_scope(r, sub_prefix)],
+        repo_only=[r for r in d.repo_only if rel_in_scope(r, sub_prefix)],
+        modified=[r for r in d.modified if rel_in_scope(r, sub_prefix)],
+        excluded=[r for r in d.excluded if rel_in_scope(r, sub_prefix)],
+        denied_live=[r for r in d.denied_live if rel_in_scope(r, sub_prefix)],
+    )
+
+
 def entry_applies(entry: Entry, box_tags=frozenset()) -> bool:
     """Is this entry for this box? Its `os` must match and every tag it
     requires must be declared in the box's tags (boxconfig). The one

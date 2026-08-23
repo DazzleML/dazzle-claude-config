@@ -16,7 +16,7 @@ from .backup import BackupSession
 from .gitops import CheckoutRepo
 from .manifest import Manifest
 from .secrets import is_denied
-from .syncmap import diff_all, entry_applies, entry_bases
+from .syncmap import diff_all, entry_applies, entry_bases, only_scope, scope_diff
 
 
 class ApplyConflictError(RuntimeError):
@@ -58,8 +58,10 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
     session = BackupSession(backup_root)
 
     for d in diff_all(manifest, checkout, roots, box_tags):
-        if only and not d.entry.repo.startswith(only):
+        reached, sub = only_scope(only, d.entry.repo)
+        if not reached:
             continue
+        d = scope_diff(d, sub)
         result.only_matched += 1
         if d.mismatch:
             result.mismatched.append(f"{d.entry.repo}: {d.mismatch}")
@@ -121,7 +123,8 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
     for entry in manifest.seed_entries():
         if not entry_applies(entry, box_tags):
             continue
-        if only and not entry.repo.startswith(only):
+        reached, sub = only_scope(only, entry.repo)
+        if not reached or sub is not None:      # a seed is one file; no sub-path
             continue
         result.only_matched += 1
         live_base, repo_base = entry_bases(

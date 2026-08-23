@@ -35,7 +35,7 @@ from pathlib import Path
 
 from .manifest import Entry, Manifest
 from .secrets import is_denied, scan_file
-from .syncmap import EntryDiff, _normalize_eol, diff_all
+from .syncmap import EntryDiff, _normalize_eol, diff_all, only_scope, rel_in_scope, scope_diff
 
 # Strategies whose target is a straight copy of one repo file. Anything else
 # COMPOSES its target (see MERGE_REFUSED_STRATEGIES) and must not be merged at
@@ -934,7 +934,8 @@ class MergeResult:
 
 
 def two_way_labels(manifest: Manifest, checkout: Path,
-                   roots: dict[str, Path]) -> list[str]:
+                   roots: dict[str, Path], box_tags=frozenset(),
+                   only: str | None = None) -> list[str]:
     """Files that changed on BOTH sides, so a one-way copy would lose work.
 
     `collect` and `apply` treat "differs" as ordinary work: both bucket
@@ -964,9 +965,13 @@ def two_way_labels(manifest: Manifest, checkout: Path,
     is filtered before this function sees it.
     """
     out: list[str] = []
-    for d in diff_all(manifest, checkout, roots):
+    for d in diff_all(manifest, checkout, roots, box_tags):
         if d.mismatch:
             continue
+        reached, sub = only_scope(only, d.entry.repo)
+        if not reached:
+            continue
+        d = scope_diff(d, sub)
         entry = d.entry
         for rel in d.modified:
             live = d.live_base / rel if rel else d.live_base
@@ -1028,7 +1033,10 @@ def run(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
     items = plan(manifest, checkout, roots, stage=ws, base_mode=base_mode,
                  base_override=base_override, base_label=base_label)
     if only:
-        items = [i for i in items if i.entry.repo.startswith(only)]
+        def _reached(i):
+            ok, sub = only_scope(only, i.entry.repo)
+            return ok and rel_in_scope(i.rel, sub)
+        items = [i for i in items if _reached(i)]
     if base_override is not None and union:
         raise MergeError("--union keeps both sides without review, which is the opposite "
                          "of an adoption merge: a supplied base is merged conflict-on-delete "

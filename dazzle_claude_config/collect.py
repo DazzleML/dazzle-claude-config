@@ -14,7 +14,7 @@ from pathlib import Path
 from .gitops import CheckoutRepo
 from .manifest import Manifest
 from .secrets import SecretHit, is_denied, scan_file
-from .syncmap import diff_all
+from .syncmap import diff_all, only_scope, scope_diff
 
 
 @dataclass
@@ -47,8 +47,10 @@ def collect(manifest: Manifest, checkout: Path, roots: dict[str, Path],
     copied_repo_rels: list[str] = []
 
     for d in diff_all(manifest, checkout, roots, box_tags):
-        if only and not d.entry.repo.startswith(only):
+        reached, sub = only_scope(only, d.entry.repo)
+        if not reached:
             continue
+        d = scope_diff(d, sub)
         result.only_matched += 1
         if d.mismatch:
             result.mismatched.append(f"{d.entry.repo}: {d.mismatch}")

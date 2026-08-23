@@ -1,0 +1,76 @@
+{
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "tests/test_only_scope.py"
+ ],
+ "mutations": [
+  {
+   "id": "M1",
+   "file": "dazzle_claude_config/syncmap.py",
+   "original": "    if o == r or r.startswith(o + \"/\"):\n        return True, None",
+   "mutated": "    if o == r or r.startswith(o):\n        return True, None",
+   "note": "string-prefix regression on entries"
+  },
+  {
+   "id": "M2",
+   "file": "dazzle_claude_config/syncmap.py",
+   "original": "    if o.startswith(r + \"/\"):\n        return True, o[len(r) + 1:]",
+   "mutated": "    if o.startswith(r):\n        return True, o[len(r) + 1:]",
+   "note": "sub-prefix branch string prefix"
+  },
+  {
+   "id": "M3",
+   "file": "dazzle_claude_config/syncmap.py",
+   "original": "        return True, o[len(r) + 1:]",
+   "mutated": "        return True, o[len(r):]",
+   "note": "off-by-one slice keeps the slash"
+  },
+  {
+   "id": "M4",
+   "file": "dazzle_claude_config/syncmap.py",
+   "original": "    o = only.replace(chr(92), \"/\").strip(\"/\")\n    r = repo.strip(\"/\")",
+   "mutated": "    o = only.strip(\"/\")\n    r = repo.strip(\"/\")",
+   "note": "dropped backslash normalisation"
+  },
+  {
+   "id": "M5",
+   "file": "dazzle_claude_config/syncmap.py",
+   "original": "    if o == r or r.startswith(o + \"/\"):\n        return True, None\n    if o.startswith(r + \"/\"):",
+   "mutated": "    if r.startswith(o + \"/\"):\n        return True, None\n    if o.startswith(r + \"/\"):",
+   "note": "exact-match case lost"
+  },
+  {
+   "id": "M6",
+   "file": "dazzle_claude_config/syncmap.py",
+   "original": "    r = rel.replace(chr(92), \"/\")\n    return r == sub_prefix or r.startswith(sub_prefix + \"/\")",
+   "mutated": "    r = rel.replace(chr(92), \"/\")\n    return r.startswith(sub_prefix)",
+   "note": "rel_in_scope string prefix"
+  },
+  {
+   "id": "M7",
+   "file": "dazzle_claude_config/syncmap.py",
+   "original": "    r = rel.replace(chr(92), \"/\")\n    return r == sub_prefix or r.startswith(sub_prefix + \"/\")",
+   "mutated": "    r = rel.replace(chr(92), \"/\")\n    return r.startswith(sub_prefix + \"/\")",
+   "note": "exact-file case dropped"
+  },
+  {
+   "id": "M8",
+   "file": "dazzle_claude_config/syncmap.py",
+   "original": "        denied_live=[r for r in d.denied_live if rel_in_scope(r, sub_prefix)],",
+   "mutated": "        denied_live=list(d.denied_live),",
+   "note": "denied_live left unfiltered"
+  },
+  {
+   "id": "M9",
+   "file": "dazzle_claude_config/syncmap.py",
+   "original": "    \"\"\"Is a file (entry-relative path) inside the --only sub-prefix?\"\"\"\n    if sub_prefix is None:\n        return True",
+   "mutated": "    \"\"\"Is a file (entry-relative path) inside the --only sub-prefix?\"\"\"\n    if not sub_prefix:\n        return True",
+   "note": "None-vs-truthiness on empty sub-prefix"
+  }
+ ]
+}

@@ -1,0 +1,27 @@
+{
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "tests/test_only_scope.py"
+ ],
+ "mutations": [
+  {
+   "id": "M2",
+   "file": "dazzle_claude_config/syncmap.py",
+   "original": "    if o.startswith(r + \"/\"):\n        return True, o[len(r) + 1:]",
+   "mutated": "    if o.startswith(r):\n        return True, o[len(r) + 1:]",
+   "note": "sub-prefix branch string prefix"
+  },
+  {
+   "id": "M8",
+   "file": "dazzle_claude_config/syncmap.py",
+   "original": "        denied_live=[r for r in d.denied_live if rel_in_scope(r, sub_prefix)],",
+   "mutated": "        denied_live=list(d.denied_live),",
+   "note": "denied_live left unfiltered"
+  }
+ ]
+}

@@ -18,7 +18,7 @@ from .platform_info import default_checkout_dir, territory_roots
 from .render import c
 from . import boxconfig, userconfig
 from .syncmap import (_normalize_eol, diff_all, entry_gate_reason, files_differ,
-                      line_stats)
+                      line_stats, only_scope, rel_in_scope)
 
 EXIT_CLEAN, EXIT_DRIFT, EXIT_ERROR = 0, 1, 2
 
@@ -115,7 +115,9 @@ day to day, once it is installed:
                                  "(config: require_current)")
         if verb == "collect":
             sp.add_argument("--only", default=None,
-                            help="limit to entries whose repo path starts with this prefix")
+                            help="limit to one entry (dotclaude/skills), a parent of entries "
+                                 "(dotclaude), or a subtree inside an entry "
+                                 "(dotclaude/skills/test-mutation); whole path components only")
             sp.add_argument("--add", action="store_true",
                             help="also copy files the checkout does not have yet "
                                  "(default: update tracked files only, so a collect "
@@ -125,7 +127,9 @@ day to day, once it is installed:
                             help="git mergetool name (default: probe for one whose "
                                  "binary actually exists)")
             sp.add_argument("--only", default=None,
-                            help="limit to entries whose repo path starts with this prefix")
+                            help="limit to one entry, a parent of entries, or a subtree / file "
+                                 "inside an entry (dotclaude/skills/x/SKILL.md); whole path "
+                                 "components only")
             sp.add_argument("--accept", action="store_true",
                             help="install validated results into BOTH sides "
                                  "(default: leave them in the workspace for review)")
@@ -188,7 +192,9 @@ day to day, once it is installed:
                                  "binary actually exists)")
         if verb == "apply":
             sp.add_argument("--only", default=None,
-                            help="limit to entries whose repo path starts with this prefix")
+                            help="limit to one entry (dotclaude/skills), a parent of entries "
+                                 "(dotclaude), or a subtree inside an entry "
+                                 "(dotclaude/skills/test-mutation); whole path components only")
             sp.add_argument("--sync-removals", action="store_true",
                             help="stage live-only files into the backup dir "
                                  "(default: report only)")
@@ -697,7 +703,7 @@ def _gated_matches(manifest, box, pred) -> list[str]:
 
 
 def _warn_only_miss(args, manifest, box) -> None:
-    hidden = _gated_matches(manifest, box, lambda r: r.startswith(args.only))
+    hidden = _gated_matches(manifest, box, lambda r: only_scope(args.only, r)[0])
     if hidden:
         print(c("yellow", f"warning: --only {args.only!r} matches only entries "
                           f"this box is not tagged for: " + "; ".join(hidden)))
@@ -943,7 +949,8 @@ def main(argv: list[str] | None = None) -> int:
         # two-way file that discards the losing side and reports success.
         wrong_dir: dict[str, str] = {}
         if args.verb in ("collect", "apply") and not getattr(args, "force", False):
-            risky = merge.two_way_labels(manifest, checkout, roots)
+            risky = merge.two_way_labels(manifest, checkout, roots, box.tags,
+                                         only=getattr(args, "only", None))
             # DIRECTION. A one-sided file is safe for ONE verb, not both:
             # live-ahead has nothing to apply (apply would revert the user's
             # edits); checkout-ahead has nothing to collect (collect would undo
@@ -955,7 +962,12 @@ def main(argv: list[str] | None = None) -> int:
                 for d in diff_all(manifest, checkout, roots, box.tags):
                     if d.mismatch or not d.modified:
                         continue
+                    reached, sub = only_scope(getattr(args, "only", None), d.entry.repo)
+                    if not reached:
+                        continue
                     for rel in d.modified:
+                        if not rel_in_scope(rel, sub):
+                            continue
                         kind, evidence = _classify(checkout, d, rel)
                         key = (f"{d.entry.target}/{rel}" if rel else d.entry.target) \
                             if args.verb == "apply" else \
@@ -969,12 +981,10 @@ def main(argv: list[str] | None = None) -> int:
                         elif args.verb == "collect" and kind == "one-sided" \
                                 and evidence.startswith("checkout ahead"):
                             wrong_dir[key] = "checkout is ahead -- nothing to collect; `ccs apply` it"
-            # Both verbs carry --only since 0.4.0; getattr stays as armor
-            # against the original 0.3.x bug, where reaching for args.only
-            # unconditionally crashed collect while apply passed.
-            only = getattr(args, "only", None)
-            if only:
-                risky = [r for r in risky if r.startswith(only.split("/")[-1])]
+            # --only is applied inside two_way_labels, component-wise, sub-entry
+            # included -- the old post-filter on the last path component
+            # ("skills" for --only dotclaude/skills) could not express a
+            # subtree and matched by accident on a shared last component.
             if risky:
                 print(c("bold_red", "REFUSING") + ": " +
                       f"{render.n_files(len(risky))} changed on BOTH sides -- "

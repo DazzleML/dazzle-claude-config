@@ -38,3 +38,12 @@ git hash-object (first 12). Only separated-generation runs (modes 1-2) write her
   contiguous run of its own lines, none of which is a marker line, so its span
   can never cross a hunk boundary; the mask is therefore uniform over the span
   and `any` == `all`. (2026-08-22, mode 1.)
+
+## dazzle_claude_config/syncmap.py @ 8694a5c0fd05
+
+- M9 (v0.4.3 sweep): `rel_in_scope`: `if sub_prefix is None` -> `if not sub_prefix`.
+  **equivalent** -- the only producer of a sub-prefix is `only_scope`, which
+  strips trailing slashes before slicing, so `--only dotclaude/skills/` is
+  the whole entry (`(True, None)`) and an empty-string sub-prefix can never
+  reach `rel_in_scope`. Pinned by the trailing-slash case in
+  `test_only_scope`. (2026-08-22, mode 1.)

@@ -122,6 +122,8 @@ ccs merge --only dotclaude/CLAUDE.md --base-from C:/Users/me:.claude/CLAUDE.md -
 
 One base is one file's ancestor, so the run must be scoped to one file with `--only`.
 
+`--only` takes an entry (`dotclaude/skills`), a parent of entries (`dotclaude`), or a subtree or file inside an entry (`dotclaude/skills/test-mutation`, `dotclaude/skills/x/SKILL.md`), matched on whole path components -- and it scopes everything: the copy, the two-sided refusal, `--force`, and the direction skips.
+
 ## Checking that a step did what it said
 
 ```bash
