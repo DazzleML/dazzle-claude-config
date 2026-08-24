@@ -272,3 +272,59 @@ def test_diff_on_a_gated_off_path_names_the_gate(tagged, capsys):
     assert "not for this box: 'machines/prod-vps/machine.md'" in err
     assert "needs tags: prod-vps" in err
     assert "no such file in any manifest entry" not in err
+
+
+# --- apply --reseed (the migration move for an existing seeded file) -----
+
+def test_reseed_backs_up_and_overwrites_one_seed(tagged, backup_dir):
+    """The migration move: a box whose live file predates the seed gets the
+    payload's fresh seed, old copy in this run's backup dir first. Uses the
+    fixture's real seed entry (settings.local.seed.json -> settings.local.json;
+    CLAUDE.md is still a copy entry in this fixture)."""
+    claude, user, checkout, manifest, roots = tagged
+    from dazzle_claude_config.apply import apply
+    (claude / "settings.local.json").write_text('{"mine": true}', encoding="utf-8")
+    r = apply(manifest, checkout, roots, backup_dir)
+    assert (claude / "settings.local.json").read_text(encoding="utf-8") == '{"mine": true}'
+    r = apply(manifest, checkout, roots, backup_dir, reseed="settings.local.json")
+    assert r.reseeded == ["settings.local.json"]
+    assert (claude / "settings.local.json").read_text(encoding="utf-8") == "{}\n"
+    backed = list(r.backup_dir.rglob("settings.local.json"))
+    assert backed and backed[0].read_text(encoding="utf-8") == '{"mine": true}'
+
+
+def test_reseed_dry_run_changes_nothing(tagged, backup_dir):
+    claude, user, checkout, manifest, roots = tagged
+    from dazzle_claude_config.apply import apply
+    (claude / "settings.local.json").write_text('{"precious": 1}', encoding="utf-8")
+    r = apply(manifest, checkout, roots, backup_dir, reseed="settings.local.json", dry_run=True)
+    assert r.reseeded == ["settings.local.json"]
+    assert (claude / "settings.local.json").read_text(encoding="utf-8") == '{"precious": 1}'
+
+
+def test_reseed_without_a_live_file_warns_not_seeds(tagged, backup_dir, capsys):
+    claude, user, checkout, manifest, roots = tagged
+    rc = main(_argv(tagged, "apply", "--reseed", "nope.md"))
+    out = capsys.readouterr().out
+    assert "matched no seed entry with an existing live file" in out
+    assert rc == 0
+
+
+def test_reseed_never_touches_copy_entries(tagged, backup_dir):
+    claude, user, checkout, manifest, roots = tagged
+    from dazzle_claude_config.apply import apply
+    (claude / "agents" / "oracle.md").write_text("mine\n", encoding="utf-8")
+    r = apply(manifest, checkout, roots, backup_dir, reseed="agents/oracle.md")
+    assert r.reseeded == []
+
+
+def test_reseed_on_an_absent_file_just_seeds_without_the_warning(tagged, capsys):
+    """--reseed where nothing exists yet is an ordinary seed; the no-match
+    warning must not claim 'nothing done' over a seed that happened."""
+    claude, user, *_ = tagged
+    assert not (claude / "settings.local.json").exists()
+    rc = main(_argv(tagged, "apply", "--reseed", "settings.local.json"))
+    out = capsys.readouterr().out
+    assert "seeded settings.local.json" in out
+    assert "matched no seed entry" not in out
+    assert rc == 0

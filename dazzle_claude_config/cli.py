@@ -239,6 +239,12 @@ day to day, once it is installed:
             sp.add_argument("--sync-removals", action="store_true",
                             help="stage live-only files into the backup dir "
                                  "(default: report only)")
+            sp.add_argument("--reseed", default=None, metavar="TARGET",
+                            help="for ONE seed-if-absent entry (by target or repo "
+                                 "path, e.g. CLAUDE.md): back the existing live file "
+                                 "into this run's backup dir and write the payload's "
+                                 "fresh seed over it -- the migration move for a box "
+                                 "that predates the seed")
     return p
 
 
@@ -1096,7 +1102,8 @@ def main(argv: list[str] | None = None) -> int:
             r = apply(manifest, checkout, roots, backups, repo=repo,
                       dry_run=args.dry_run, only=args.only,
                       sync_removals=args.sync_removals,
-                      skip=wrong_dir, box_tags=box.tags)
+                      skip=wrong_dir, box_tags=box.tags,
+                      reseed=getattr(args, "reseed", None))
             for rel, why in r.skipped:
                 print(f"{c('dim', 'skipped')} {rel} {c('dim', '-- ' + why)}")
             for rel, pattern in r.refused_denied:
@@ -1106,6 +1113,9 @@ def main(argv: list[str] | None = None) -> int:
             for rel in r.copied:
                 verb = "would apply" if args.dry_run else "applied"
                 print(f"{c('green', verb)}: {rel}")
+            for rel in r.reseeded:
+                print(f"{c('cyan', 'reseeded')} {rel} "
+                      f"{c('dim', '-- previous copy backed up; the fresh seed is live')}")
             for rel in r.seeded:
                 print(f"{c('green', 'seeded')} {rel} {c('dim', '-- was absent locally')}")
             for rel in r.removals_staged:
@@ -1127,7 +1137,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(c("dim", f"backups: {r.backup_dir}"))
             if args.only and r.only_matched == 0:
                 _warn_only_miss(args, manifest, box)
-            if not (r.copied or r.seeded or r.removals_staged or r.refused_denied):
+            rs = getattr(args, "reseed", None)
+            if rs and not r.reseeded and not r.failed                     and rs.replace(chr(92), "/") not in (t.replace(chr(92), "/")
+                                                         for t in r.seeded):
+                print(c("yellow", f"warning: --reseed {rs!r} matched no seed "
+                                  "entry with an existing live file (nothing done)"))
+            if not (r.copied or r.seeded or r.reseeded or r.removals_staged or r.refused_denied):
                 print(c("green", "apply: nothing to do") +
                       " -- your live config already matches the checkout")
             if r.failed or r.mismatched:

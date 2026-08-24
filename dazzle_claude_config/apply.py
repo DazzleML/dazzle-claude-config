@@ -36,6 +36,7 @@ class ApplyResult:
     failed: list[tuple[str, str]] = field(default_factory=list)  # (path, reason)
     mismatched: list[str] = field(default_factory=list)        # type-conflict entries
     only_matched: int = 0                                      # entries passing --only
+    reseeded: list[str] = field(default_factory=list)  # --reseed: old copy backed up, seed written
     backup_dir: Path | None = None
 
 
@@ -44,7 +45,7 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
           dry_run: bool = False, only: str | None = None,
           sync_removals: bool = False,
           skip: dict[str, str] | None = None,
-          box_tags=frozenset()) -> ApplyResult:
+          box_tags=frozenset(), reseed: str | None = None) -> ApplyResult:
     """`skip` maps a target path (`skills/x.md`) to a reason. Files whose LIVE
     copy is ahead of the checkout have nothing to apply -- copying would revert
     the user's own edits -- so the CLI passes them here, attributed through
@@ -133,7 +134,23 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
         if pattern:
             result.refused_denied.append((entry.repo, pattern))
             continue
-        if repo_base.is_file() and not live_base.exists():
+        # --reseed <target>: the migration case. A box that already HAS the
+        # file (an old CLAUDE.md, a hand-made machine.md) wants the payload's
+        # fresh seed instead -- moving the old copy aside by hand is exactly
+        # the chore ccs exists to remove. The existing copy goes into this
+        # run's backup dir first, like any other overwrite (A3).
+        want_reseed = reseed is not None and reseed.replace(chr(92), "/") in (
+            entry.target, entry.repo)
+        if repo_base.is_file() and want_reseed and live_base.is_file():
+            if not dry_run:
+                try:
+                    session.save(live_base, entry.target)
+                    shutil.copy2(repo_base, live_base)
+                except OSError as e:
+                    result.failed.append((entry.target, str(e)))
+                    continue
+            result.reseeded.append(entry.target)
+        elif repo_base.is_file() and not live_base.exists():
             if not dry_run:
                 try:
                     live_base.parent.mkdir(parents=True, exist_ok=True)
