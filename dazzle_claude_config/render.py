@@ -193,7 +193,7 @@ def humanize_remote(raw: str, fetched=UNSPECIFIED, detail: str = "",
         return (f"{local}, {ahead.group(1)} ahead / {behind.group(1)} behind "
                 f"-- diverged; resolve in the checkout (ccs git ...)")
     if behind:
-        hint = "ccs git pull" if fetched else "ccs git fetch to confirm"
+        hint = "ccs status --pull" if fetched else "ccs git fetch to confirm"
         stale = "" if fetched else " as last fetched"
         return f"{local}, {behind.group(1)} behind{stale} -- {hint}"
     if ahead:

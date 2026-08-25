@@ -902,8 +902,14 @@ def _classify(checkout, d, rel):
     import subprocess
     shown = subprocess.run(["git", "show", f"HEAD:{repo_path}"],
                            cwd=str(checkout), capture_output=True)
-    if shown.returncode != 0 or not shown.stdout:
-        return "local snap", "never committed -- the checkout copy is a local snapshot; collect replaces it"
+    # Only the return code answers "is this path in HEAD?". An empty file
+    # that IS committed resolves fine with empty output, and treating that
+    # as "never committed" mis-attributes a tracked file (found by the
+    # v0.5.6 mutation sweep, which proposed the `and` and was right to).
+    if shown.returncode != 0:
+        return "local snap", ("not committed in the checkout yet -- history "
+                              "cannot say which side is newer; apply installs "
+                              "it, collect would replace it")
     ours = lv.read_bytes()
     theirs = shown.stdout
     found = merge.infer_base(checkout, repo_path, ours, theirs)
@@ -1644,7 +1650,9 @@ def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None,
         up = repo.upstream() if repo is not None else "upstream"
         print(c("bold_yellow", "status: live matches the checkout") +
               f" -- but the checkout is {behind} behind {up}; "
-              + c("bold", "git pull") + " then run status again")
+              + c("bold", "ccs status --pull")
+              + " fast-forwards and re-checks in one step "
+              + c("dim", '(or set "auto_pull": true and never think about it)'))
     elif not diffs:
         # "Everything ccs SYNCS matches" is the honest claim (issue #27):
         # seeded files are the box's own and are not compared, and saying
@@ -1832,12 +1840,9 @@ def main(argv: list[str] | None = None) -> int:
                         key = (f"{d.entry.target}/{rel}" if rel else d.entry.target) \
                             if args.verb == "apply" else \
                             (f"{d.entry.repo}/{rel}" if rel else d.entry.repo)
-                        if args.verb == "apply" and (
-                                (kind == "one-sided" and evidence.startswith("live ahead"))
-                                or kind == "local snap"):
-                            wrong_dir[key] = ("live is ahead -- nothing to apply; `ccs collect` it"
-                                              if kind == "one-sided" else
-                                              "checkout copy is an uncommitted local snapshot, older than live")
+                        if (args.verb == "apply" and kind == "one-sided"
+                                and evidence.startswith("live ahead")):
+                            wrong_dir[key] = "live is ahead -- nothing to apply; `ccs collect` it"
                         elif args.verb == "collect" and kind == "one-sided" \
                                 and evidence.startswith("checkout ahead"):
                             wrong_dir[key] = "checkout is ahead -- nothing to collect; `ccs apply` it"
@@ -1965,8 +1970,16 @@ def main(argv: list[str] | None = None) -> int:
                 print(c("yellow", f"warning: --reseed {rs!r} matched no seed "
                                   "entry with an existing live file (nothing done)"))
             if not (r.copied or r.seeded or r.reseeded or r.removals_staged or r.refused_denied):
+                # Only a claim of equality when nothing was held back. Files
+                # skipped for direction or reported as pending removals mean
+                # live does NOT match the checkout, and saying so was a lie
+                # the summary told for months (#29).
+                held = bool(wrong_dir or r.removals_pending or r.mismatched)
                 print(c("green", "apply: nothing to do") +
-                      " -- your live config already matches the checkout")
+                      (" -- nothing was applied; see the skipped and pending "
+                       "lines above for what differs"
+                       if held else
+                       " -- your live config already matches the checkout"))
             if r.failed or r.mismatched:
                 return EXIT_ERROR
             # A denied file IN THE PAYLOAD is an anomaly (unlike collect's

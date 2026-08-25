@@ -4,6 +4,16 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-08-25
+
+### Fixed
+- **`apply` refused to install a checkout file that was never committed, and blamed the checkout for it.** A file you create in the payload, apply, then edit -- the ordinary way to author one -- was skipped on the second apply as "an uncommitted local snapshot, older than live", a direction git cannot supply for a path with no history. The both-sides guard exists to stop a one-way copy from discarding *committed* work; an uncommitted checkout file has none to protect, and the live copy is backed up like any other overwrite. It applies now, and `status` says plainly that history cannot tell which side is newer.
+- **`apply` claimed "your live config already matches the checkout" when it did not.** Any run that copied nothing said so, including runs that skipped files for direction or reported pending removals. The summary now says what was held back instead of asserting a match that the same output contradicts.
+- **A committed but empty file was classified as never committed.** `git show HEAD:<path>` succeeds with empty output for an empty tracked file, and the emptiness was being read as absence; only the return code decides now. Found by mutation testing -- the mutant that survived was pointing at a real defect.
+
+### Changed
+- When the checkout is behind, `status` now names the command that acts: `ccs status --pull` fast-forwards and re-checks in one step, and the line mentions the `auto_pull` setting that makes it permanent. The old advice ("git pull, then run status again") predated both, so the feature existed for a release without ever being mentioned where it was needed.
+
 ## [0.5.5] - 2026-08-25
 
 ### Fixed
@@ -263,7 +273,8 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.2...v0.5.3

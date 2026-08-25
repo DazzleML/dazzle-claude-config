@@ -236,7 +236,7 @@ def test_no_pull_flag_beats_the_config(fleet, capsys):
     before = _head(fleet["co"])
     main(_ccs(fleet, "status", "--no-pull"))
     out = capsys.readouterr().out
-    assert "1 behind -- ccs git pull" in out
+    assert "1 behind -- ccs status --pull" in out
     assert _head(fleet["co"]) == before          # untouched
 
 
@@ -317,7 +317,7 @@ def test_humanize_remote_states():
     assert humanize_remote("## main...origin/main", fetched=None) == \
         "main, in sync as last fetched"
     assert humanize_remote("## main...origin/main [behind 2]", fetched=True) == \
-        "main, 2 behind -- ccs git pull"
+        "main, 2 behind -- ccs status --pull"
     assert humanize_remote("## main...origin/main [ahead 1]", fetched=True) == \
         "main, 1 ahead -- ccs git push to share"
     assert "diverged" in humanize_remote(

@@ -1,0 +1,41 @@
+{
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-x",
+  "tests/test_untracked_attribution.py",
+  "tests/test_remote_awareness.py"
+ ],
+ "mutations": [
+  {
+   "id": "M2",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "                held = bool(wrong_dir or r.removals_pending or r.mismatched)",
+   "mutated": "                held = bool(r.removals_pending or r.mismatched)",
+   "note": "A direction-skipped file no longer counts as held back."
+  },
+  {
+   "id": "M4",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "if (args.verb == \"apply\" and kind == \"one-sided\"\n                                and evidence.startswith(\"live ahead\")):",
+   "mutated": "if (args.verb == \"apply\" and kind == \"one-sided\"\n                                and evidence.startswith(\"checkout ahead\")):",
+   "note": "Direction flipped: apply now skips the files it should copy and copies the ones it should skip."
+  },
+  {
+   "id": "M5",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "if (args.verb == \"apply\" and kind == \"one-sided\"\n                                and evidence.startswith(\"live ahead\")):",
+   "mutated": "if (args.verb == \"apply\" and kind != \"one-sided\"\n                                and evidence.startswith(\"live ahead\")):",
+   "note": "Kind check inverted: attributed one-sided files stop being guarded, unattributed ones start."
+  },
+  {
+   "id": "M6",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "    if shown.returncode != 0:",
+   "mutated": "    if shown.returncode == 0:",
+   "note": "Return-code check inverted: present paths are called uncommitted and absent ones are attributed."
+  }
+ ]
+}

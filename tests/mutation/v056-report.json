@@ -1,0 +1,96 @@
+{
+  "harness": {
+    "name": "mutation_sweep.py",
+    "version": "0.1.0"
+  },
+  "environment": {
+    "python": "3.12.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "root": ".",
+    "test_command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-x",
+      "tests/test_untracked_attribution.py",
+      "tests/test_remote_awareness.py"
+    ],
+    "timestamp": "2026-08-25T17:47:52-04:00"
+  },
+  "results": [
+    {
+      "id": "M1",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "A pending removal no longer counts as held back, so the summary claims live matches the checkout while a file is waiting to be retired -- the exact lie #29 removed.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M2",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "A direction-skipped file no longer counts as held back.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M3",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "or->and: only all three at once count as held back, so almost every held-back run claims a match.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M4",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Direction flipped: apply now skips the files it should copy and copies the ones it should skip.",
+      "verdict": "apply-failed",
+      "restore_ok": true,
+      "output_tail": "M4: expected exactly 1 occurrence of the original text in dazzle_claude_config/cli.py, found 0"
+    },
+    {
+      "id": "M5",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Kind check inverted: attributed one-sided files stop being guarded, unattributed ones start.",
+      "verdict": "apply-failed",
+      "restore_ok": true,
+      "output_tail": "M5: expected exactly 1 occurrence of the original text in dazzle_claude_config/cli.py, found 0"
+    },
+    {
+      "id": "M6",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "or->and: a path git resolves to empty output is no longer treated as uncommitted, and the code proceeds to attribute against nothing.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M7",
+      "file": "dazzle_claude_config/render.py",
+      "note": "Hints swapped: a confirmed-behind checkout is told to re-fetch, stale knowledge is told to pull.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M8",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "and->or: the behind-only verdict fires whenever there is drift, replacing the real drift report.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    }
+  ],
+  "summary": {
+    "killed": 4,
+    "survived": 2,
+    "apply-failed": 2
+  },
+  "anomalies": [
+    "M4: apply failed -- M4: expected exactly 1 occurrence of the original text in dazzle_claude_config/cli.py, found 0",
+    "M5: apply failed -- M5: expected exactly 1 occurrence of the original text in dazzle_claude_config/cli.py, found 0"
+  ]
+}

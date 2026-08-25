@@ -91,9 +91,9 @@ def test_status_reports_behind_after_the_other_machine_pushes(fleet, capsys):
     _push_from_other(fleet)
     rc = main(_ccs(fleet, "status"))
     out = capsys.readouterr().out
-    assert "1 behind -- ccs git pull" in out, out   # the remote leg (#22 wording)
+    assert "1 behind -- ccs status --pull" in out, out   # the leg names the verb that acts
     assert "in sync" not in out
-    assert "git pull" in out                     # the verdict line says what to do
+    assert "--pull" in out                       # the verdict names the verb that acts
     assert rc == 1                               # behind is drift, even with live == checkout
 
 
