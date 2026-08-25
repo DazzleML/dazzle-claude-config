@@ -4,6 +4,11 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-08-25
+
+### Fixed
+- **`ccs migrate` wrote its backups to the real home directory, ignoring `--user-claude`.** The migration derived its backup root from the interpreter's home rather than from the run's own territories, so a run pointed at a scratch tree still put both the kept copy and the apply backup into the operator's actual `~/claude/backups/`. Every other verb derives it from the run's territories; this one now does too. Found by a checklist run that wrote six real files before noticing -- and the automated tests had not caught it because they set `HOME` to the scratch tree, which made the wrong path coincide with the right one. Those overrides are gone, and a test now pins where both copies land.
+
 ## [0.5.4] - 2026-08-25
 
 ### Added
@@ -258,7 +263,8 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.4...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.1...v0.5.2

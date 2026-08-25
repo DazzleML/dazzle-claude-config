@@ -227,8 +227,15 @@ def _run_migration(args, manifest, checkout, roots, repo, target,
     """Take the payload's version of one starter file, and prove it."""
     from . import migrate
     try:
+        # The backup root comes from THIS RUN's territories, exactly as the
+        # apply verb derives it -- the free backup_root() resolves from the
+        # real home directory and would ignore --user-claude, writing into
+        # the operator's actual backups from a scratch run (found by the
+        # v0.5.4 checklist run, which wrote six real artifacts before it
+        # noticed).
+        backups = roots["USER_CLAUDE"] / "backups" / "ccs"
         r = migrate.reseed_migration(
-            manifest, checkout, roots, backup_root(), target, repo=repo,
+            manifest, checkout, roots, backups, target, repo=repo,
             box_tags=getattr(args, "_box_tags", frozenset()),
             dry_run=getattr(args, "dry_run", False))
     except migrate.MigrateError as e:

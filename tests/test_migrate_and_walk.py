@@ -74,8 +74,6 @@ def _backup_root(w) -> Path:
 # -- the migration, end to end ------------------------------------------------
 
 def test_migration_keeps_a_copy_takes_the_new_one_and_proves_it(world, capsys, monkeypatch):
-    monkeypatch.setenv("USERPROFILE", str(world["tmp"]))
-    monkeypatch.setenv("HOME", str(world["tmp"]))
     rc = main(_ccs(world, "migrate", "CLAUDE.md"))
     out = capsys.readouterr().out
     assert rc == 0, out
@@ -83,13 +81,25 @@ def test_migration_keeps_a_copy_takes_the_new_one_and_proves_it(world, capsys, m
     assert "your pre-migration copy is intact" in out
     assert "byte for byte" in out                                  # ccs's backup too
     assert "the payload's version is live now" in out
-    kept = [p for p in (world["tmp"]).rglob("CLAUDE.md.*") if p.is_file()]
+    kept = list((world["user"] / "backups" / "pre-migrate").glob("CLAUDE.md.*"))
     assert kept and kept[0].read_bytes() == OLD                    # the keep-copy
 
 
+def test_backup_root_honours_the_user_claude_override(world, capsys):
+    # Regression (v0.5.4 checklist run-01): _run_migration derived its backup
+    # root from the real home directory instead of THIS RUN's territories, so
+    # a scratch run wrote into the operator's actual ~/claude/backups. Both
+    # copies must land under the --user-claude tree and nowhere else.
+    rc = main(_ccs(world, "migrate", "CLAUDE.md"))
+    assert rc == 0
+    kept = list((world["user"] / "backups" / "pre-migrate").glob("CLAUDE.md.*"))
+    assert kept and kept[0].read_bytes() == OLD
+    ccs_backups = list((world["user"] / "backups" / "ccs").glob("*__apply"))
+    assert ccs_backups, "apply's own backup dir must be under the scratch user tree too"
+    assert (ccs_backups[0] / "CLAUDE.md").read_bytes() == OLD
+
+
 def test_migration_dry_run_writes_nothing(world, capsys, monkeypatch):
-    monkeypatch.setenv("USERPROFILE", str(world["tmp"]))
-    monkeypatch.setenv("HOME", str(world["tmp"]))
     rc = main(_ccs(world, "migrate", "CLAUDE.md", "--dry-run"))
     out = capsys.readouterr().out
     assert rc == 0
@@ -129,8 +139,6 @@ def test_verification_catches_a_corrupted_backup(world, monkeypatch, capsys):
     # The proof must be able to FAIL: if ccs's own backup does not hold the
     # pre-migration bytes, the migration reports a PROBLEM rather than
     # congratulating itself.
-    monkeypatch.setenv("USERPROFILE", str(world["tmp"]))
-    monkeypatch.setenv("HOME", str(world["tmp"]))
     real_save = None
     from dazzle_claude_config import backup as _backup
 
@@ -152,8 +160,6 @@ def test_verification_catches_a_corrupted_backup(world, monkeypatch, capsys):
 def test_verification_catches_a_corrupted_keep_copy(world, monkeypatch, capsys):
     # M08: the kept copy is only "intact" if its BYTES match -- existence is
     # not proof. Sabotage the copy itself.
-    monkeypatch.setenv("USERPROFILE", str(world["tmp"]))
-    monkeypatch.setenv("HOME", str(world["tmp"]))
     import shutil as _sh
     from dazzle_claude_config import migrate as _m
 
@@ -171,8 +177,6 @@ def test_verification_catches_a_corrupted_keep_copy(world, monkeypatch, capsys):
 def test_missing_backup_dir_is_a_problem_not_a_pass(world, monkeypatch, capsys):
     # M09: if apply reports no backup directory, the migration has lost half
     # its evidence -- that is a PROBLEM, never a verified line.
-    monkeypatch.setenv("USERPROFILE", str(world["tmp"]))
-    monkeypatch.setenv("HOME", str(world["tmp"]))
     from dazzle_claude_config import migrate as _m
     real = _m.apply
 
@@ -190,8 +194,6 @@ def test_missing_backup_dir_is_a_problem_not_a_pass(world, monkeypatch, capsys):
 def test_failed_reseed_reports_applys_own_reason(world, monkeypatch, capsys):
     # M07: the reason comes from the RESOLVED entry's failure row, so naming
     # the entry by its repo path still surfaces apply's message.
-    monkeypatch.setenv("USERPROFILE", str(world["tmp"]))
-    monkeypatch.setenv("HOME", str(world["tmp"]))
     from dazzle_claude_config import migrate as _m
     from dazzle_claude_config.apply import ApplyResult
 
@@ -256,8 +258,6 @@ def test_walk_always_records_always(world, capsys, monkeypatch):
 
 
 def test_walk_take_runs_the_verified_migration(world, capsys, monkeypatch):
-    monkeypatch.setenv("USERPROFILE", str(world["tmp"]))
-    monkeypatch.setenv("HOME", str(world["tmp"]))
     _answers(monkeypatch, "t")
     rc = main(_ccs(world, "seed"))
     out = capsys.readouterr().out
@@ -334,8 +334,6 @@ def test_seed_diff_opens_yours_against_the_payloads(world, capsys, monkeypatch):
 
 def test_walk_does_not_count_a_failed_migration_as_decided(world, capsys, monkeypatch):
     # M12: only a migration that actually succeeded counts.
-    monkeypatch.setenv("USERPROFILE", str(world["tmp"]))
-    monkeypatch.setenv("HOME", str(world["tmp"]))
     from dazzle_claude_config import migrate as _m
 
     def bad_copy(src, dst, *a, **k):
