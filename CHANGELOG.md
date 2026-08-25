@@ -4,6 +4,13 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-08-25
+
+### Added
+- **`ccs migrate [file]`** -- take the payload's newer version of a starter file you already own, safely and verifiably. It hashes your live file, keeps a copy of it outside the apply backup tree (written by a different code path, so one bug cannot quietly spoil both copies), takes the payload's version, and then PROVES the result: both copies must hash to your pre-migration bytes and the live file must match the payload's. Bare `ccs migrate` lists what this box could migrate; `--dry-run` says what would happen and writes nothing. This is the sequence two real machine migrations ran by hand -- and on the second one the proof step was silently skipped, which is exactly why the tool performs it now.
+- **`ccs seed`** with no arguments walks every open starter-file question one keystroke at a time -- keep mine `[k]` / keep always `[a]` / take the payload's `[t]` (runs the verified migration) / open both in my diff tool `[d]`, which re-asks the same file afterwards / skip `[s]` / quit `[q]`. Terminal only; piped runs say so and exit without prompting.
+- **`ccs seed diff <file>`** opens your copy against the payload's in whichever diff tool ccs can resolve -- the status line said "open both files in your diff tool" and then left you to find the binary yourself.
+
 ## [0.5.3] - 2026-08-25
 
 ### Changed
@@ -251,7 +258,8 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.0...v0.5.1

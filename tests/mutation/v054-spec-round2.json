@@ -1,0 +1,62 @@
+{
+ "mutations": [
+  {
+   "id": "M02",
+   "file": "dazzle_claude_config/migrate.py",
+   "original": "    return [(t, s) for t, s, *_ in findings\n            if s in (\"untouched-old\", \"open\", \"reopened\")]",
+   "mutated": "    return [(t, s) for t, s, *_ in findings\n            if s in (\"untouched-old\", \"open\")]",
+   "note": "Dropped 'reopened' from migratable states."
+  },
+  {
+   "id": "M05",
+   "file": "dazzle_claude_config/migrate.py",
+   "original": "    keep_dir = Path(keep_root) if keep_root else Path(backup_root).parent / \"pre-migrate\"",
+   "mutated": "    keep_dir = Path(keep_root) if keep_root is not None else Path(backup_root).parent / \"pre-migrate\"",
+   "note": "None-vs-truthiness on keep_root: empty string becomes the cwd."
+  },
+  {
+   "id": "M07",
+   "file": "dazzle_claude_config/migrate.py",
+   "original": "        why = next((f\"{p}: {e}\" for p, e in r.failed if p == entry.target),\n                   \"apply did not report the reseed\")",
+   "mutated": "        why = next((f\"{p}: {e}\" for p, e in r.failed if p == target),\n                   \"apply did not report the reseed\")",
+   "note": "Wrong variable: filters failures by the caller's string, not the resolved target."
+  },
+  {
+   "id": "M08",
+   "file": "dazzle_claude_config/migrate.py",
+   "original": "    if keep.is_file() and sha256_of(keep) == result.pre_sha:\n        result.verified.append(f\"your pre-migration copy is intact at {keep}\")",
+   "mutated": "    if keep.is_file() or sha256_of(keep) == result.pre_sha:\n        result.verified.append(f\"your pre-migration copy is intact at {keep}\")",
+   "note": "and->or: the kept copy is 'intact' on mere existence."
+  },
+  {
+   "id": "M09",
+   "file": "dazzle_claude_config/migrate.py",
+   "original": "    if result.ccs_backup is None:\n        result.problems.append(\"apply reported no backup directory\")",
+   "mutated": "    if result.ccs_backup is None:\n        result.verified.append(\"apply reported no backup directory\")",
+   "note": "A missing backup dir is recorded as a verification instead of a problem."
+  },
+  {
+   "id": "M12",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "                if rc == EXIT_CLEAN:\n                    decided += 1\n                break",
+   "mutated": "                if rc != EXIT_CLEAN:\n                    decided += 1\n                break",
+   "note": "Failed migrations count as decided; successful ones do not."
+  },
+  {
+   "id": "M13",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "                print(c(\"dim\", f\"stopped -- {decided} decided, \"\n                               f\"{len(todo) - i + 1} left\"))",
+   "mutated": "                print(c(\"dim\", f\"stopped -- {decided} decided, \"\n                               f\"{len(todo) - i} left\"))",
+   "note": "Off-by-one in the quit message's remaining count."
+  }
+ ],
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-x",
+  "tests/test_migrate_and_walk.py",
+  "tests/test_seed_visibility.py"
+ ]
+}

@@ -1,0 +1,140 @@
+{
+  "harness": {
+    "name": "mutation_sweep.py",
+    "version": "0.1.0"
+  },
+  "environment": {
+    "python": "3.12.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "root": ".",
+    "test_command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-x",
+      "tests/test_migrate_and_walk.py",
+      "tests/test_seed_visibility.py"
+    ],
+    "timestamp": "2026-08-25T14:47:30-04:00"
+  },
+  "results": [
+    {
+      "id": "M01",
+      "file": "dazzle_claude_config/migrate.py",
+      "note": "and->or in find_seed_entry: an entry meant for another box can be named.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M02",
+      "file": "dazzle_claude_config/migrate.py",
+      "note": "Dropped 'reopened' from migratable states.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M03",
+      "file": "dazzle_claude_config/migrate.py",
+      "note": "Swapped live/seed unpacking: every hash and check reads the wrong side.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M04",
+      "file": "dazzle_claude_config/migrate.py",
+      "note": "Inverted the live-file guard.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M05",
+      "file": "dazzle_claude_config/migrate.py",
+      "note": "None-vs-truthiness on keep_root: empty string becomes the cwd.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M06",
+      "file": "dazzle_claude_config/migrate.py",
+      "note": "Inverted the reseed-failure guard.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M07",
+      "file": "dazzle_claude_config/migrate.py",
+      "note": "Wrong variable: filters failures by the caller's string, not the resolved target.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M08",
+      "file": "dazzle_claude_config/migrate.py",
+      "note": "and->or: the kept copy is 'intact' on mere existence.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M09",
+      "file": "dazzle_claude_config/migrate.py",
+      "note": "A missing backup dir is recorded as a verification instead of a problem.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M10",
+      "file": "dazzle_claude_config/migrate.py",
+      "note": "A reseed that replaced nothing now reports success.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M11",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "The two keep modes are exactly reversed.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M12",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Failed migrations count as decided; successful ones do not.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M13",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Off-by-one in the quit message's remaining count.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M14",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "After a diff the walk advances instead of re-asking; the file is left undecided.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    }
+  ],
+  "summary": {
+    "killed": 7,
+    "survived": 7
+  },
+  "anomalies": []
+}

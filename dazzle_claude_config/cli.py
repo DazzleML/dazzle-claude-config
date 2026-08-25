@@ -15,7 +15,7 @@ from .apply import ApplyConflictError, apply
 from .collect import collect
 from .gitops import CheckoutRepo, GitError, GitopsSafetyError
 from .manifest import Manifest, ManifestError
-from .platform_info import default_checkout_dir, territory_roots
+from .platform_info import backup_root, default_checkout_dir, territory_roots
 from .render import c
 from . import boxconfig, userconfig
 from .syncmap import (_normalize_eol, diff_all, entry_gate_reason, files_differ,
@@ -116,16 +116,179 @@ def _run_git_verb(seen: dict, git_args: list[str]) -> int:
     return subprocess.call(["git", "-C", str(checkout), *git_args])
 
 
+def _seed_diff(entry, checkout, roots, manifest, tool=None) -> int:
+    """Open one seed pair -- yours vs the payload's -- in the user's tool.
+
+    The status line says "open both files in your diff tool"; ccs already
+    knows how to resolve that tool, so making the operator find the binary
+    themselves was work the tool could do (measured on the second box: two
+    failed attempts at a diff-tool name before the right one).
+    """
+    from .syncmap import entry_bases
+    live, seed = entry_bases(entry, checkout, roots, manifest.territories)
+    if not live.is_file() or not seed.is_file():
+        missing = live if not live.is_file() else seed
+        print(c("yellow", f"nothing to compare -- {missing} does not exist"))
+        return EXIT_CLEAN
+    try:
+        name = merge.resolve_difftool(tool)
+    except merge.MergeError as e:
+        print(c("bold_red", "error") + f": {e}", file=sys.stderr)
+        return EXIT_ERROR
+    merge.launch_difftool(name, seed, live)
+    print(c("dim", f"opened {name}: the payload's {entry.repo} vs your "
+                   f"{entry.target}"))
+    return EXIT_CLEAN
+
+
+_WALK_KEYS = """  [k] keep mine, until the payload's starter changes
+  [a] keep mine, always -- never ask again
+  [t] take the payload's version (yours is backed up first)
+  [d] open both in my diff tool, then ask me again
+  [s] skip this one for now
+  [q] quit"""
+
+
+def _seed_walk(args, manifest, checkout, roots, repo, findings) -> int:
+    """Bare `ccs seed`: walk every open question, one keystroke each.
+
+    The per-file form (`ccs seed keep <path>`) is precise and tedious --
+    a box that has drifted through a payload restructure can have several
+    at once, and typing each path is exactly the friction that makes people
+    ignore the question. This is `git add -p` for seed ownership.
+    """
+    from . import seeddecisions
+    from .syncmap import entry_bases
+    todo = [f for f in findings if f[1] in _SEED_ACTIONABLE]
+    if not todo:
+        print(c("bold_green", "nothing to decide") +
+              c("dim", " -- every starter file on this box is either "
+                       "untouched or already decided"))
+        return EXIT_CLEAN
+    if not sys.stdin.isatty():
+        print(c("yellow", f"{len(todo)} starter file(s) need a decision; "
+                          "run `ccs seed` from a terminal to walk them, "
+                          "or `ccs seed list` to see them"))
+        return EXIT_DRIFT
+    user_claude = roots.get("USER_CLAUDE")
+    print(c("bold", f"{len(todo)} starter file(s) to decide") +
+          c("dim", "  (ccs seed -h explains the words)"))
+    decided = 0
+    for i, (target, state, live, seed) in enumerate(todo, 1):
+        entry = next((e for e in manifest.seed_entries()
+                      if e.target == target), None)
+        if entry is None:
+            continue
+        while True:
+            tone, msg = _SEED_ACTIONABLE[state]
+            print()
+            print(f"{c('bold', f'({i}/{len(todo)}) {target}')}")
+            print("  " + c(tone, msg.format(t=target).split(". ")[0]))
+            print("  " + c("dim", f"yours: {live}"))
+            print("  " + c("dim", f"the payload's: {seed}"))
+            print(_WALK_KEYS)
+            try:
+                answer = input("  > ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return EXIT_DRIFT
+            if answer in ("k", "a"):
+                mode = "always" if answer == "a" else "until-changed"
+                seeddecisions.keep(target, mode, _norm_sha(seed.read_bytes()),
+                                   user_claude)
+                print("  " + c("green", f"kept yours ({mode})"))
+                decided += 1
+                break
+            if answer == "t":
+                rc = _run_migration(args, manifest, checkout, roots, repo,
+                                    target, indent="  ")
+                if rc == EXIT_CLEAN:
+                    decided += 1
+                break
+            if answer == "d":
+                _seed_diff(entry, checkout, roots, manifest,
+                           getattr(args, "tool", None))
+                continue          # ask about the SAME file again
+            if answer == "s":
+                print("  " + c("dim", "skipped -- status will ask again"))
+                break
+            if answer == "q":
+                print(c("dim", f"stopped -- {decided} decided, "
+                               f"{len(todo) - i + 1} left"))
+                return EXIT_CLEAN if decided else EXIT_DRIFT
+            print("  " + c("yellow", "please answer k, a, t, d, s, or q"))
+    print()
+    print(c("bold_green", f"done -- {decided} of {len(todo)} decided"))
+    return EXIT_CLEAN
+
+
+def _run_migration(args, manifest, checkout, roots, repo, target,
+                   indent: str = "") -> int:
+    """Take the payload's version of one starter file, and prove it."""
+    from . import migrate
+    try:
+        r = migrate.reseed_migration(
+            manifest, checkout, roots, backup_root(), target, repo=repo,
+            box_tags=getattr(args, "_box_tags", frozenset()),
+            dry_run=getattr(args, "dry_run", False))
+    except migrate.MigrateError as e:
+        print(indent + c("bold_red", "error") + f": {e}", file=sys.stderr)
+        return EXIT_ERROR
+    for line in r.verified:
+        print(indent + c("green", "verified") + c("dim", f": {line}"))
+    for line in r.problems:
+        print(indent + c("bold_red", "PROBLEM") + f": {line}")
+    if r.dry_run:
+        print(indent + c("dim", "dry run -- nothing was written"))
+        return EXIT_CLEAN
+    if r.ok:
+        print(indent + c("bold_green", f"migrated {r.target}") +
+              c("dim", f" -- your version is kept at {r.keep_copy}"))
+        return EXIT_CLEAN
+    return EXIT_DRIFT
+
+
+def _migrate_verb(args, manifest, checkout, roots, repo) -> int:
+    """`ccs migrate [target]` -- the guided, verified take-the-new-starter."""
+    from . import migrate as _migrate
+    if args.target:
+        return _run_migration(args, manifest, checkout, roots, repo,
+                              args.target)
+    findings, errors = _seed_findings(manifest, checkout, roots, repo,
+                                      args._box_tags, roots.get("USER_CLAUDE"))
+    for e in errors:
+        print(c("yellow", f"warning: {e}"))
+    cands = _migrate.candidates(findings)
+    if not cands:
+        print(c("bold_green", "nothing to migrate") +
+              c("dim", " -- no starter file on this box differs from the "
+                       "payload's version"))
+        return EXIT_CLEAN
+    print(c("bold", "can be migrated") +
+          c("dim", "  (ccs migrate <file> keeps your copy, then proves it)"))
+    for target, state in cands:
+        why = ("the payload replaced a starter you never edited" if
+               state == "untouched-old" else
+               "yours and the payload's have both moved" if state == "reopened"
+               else "yours differs from the payload's")
+        print(f"  {c('cyan', target)} {c('dim', '-- ' + why)}")
+    return EXIT_CLEAN
+
+
 def _seed_verb(args, manifest, checkout, roots, repo) -> int:
     """`ccs seed keep|reset|list` -- record, revoke, or show the per-box
     answer to "yours or the payload's?" for seeded files (issue #27)."""
     from . import seeddecisions
     from .syncmap import entry_bases
     user_claude = roots.get("USER_CLAUDE")
-    if args.action == "list":
+    if args.action in (None, "list"):
         findings, errors = _seed_findings(
             manifest, checkout, roots, repo, args._box_tags, user_claude)
-        _print_seed_block(findings, errors, long_form=True)
+        for e in errors:
+            print(c("yellow", f"warning: {e}"))
+        if args.action is None:
+            return _seed_walk(args, manifest, checkout, roots, repo, findings)
+        _print_seed_block(findings, [], long_form=True)
         if not findings:
             print(c("dim", "no file seed entries apply to this box"))
         return EXIT_CLEAN
@@ -142,6 +305,9 @@ def _seed_verb(args, manifest, checkout, roots, repo) -> int:
         print(c("bold_red", "error") + f": {target!r} is not a seed entry "
               "(ccs seed list shows them)", file=sys.stderr)
         return EXIT_ERROR
+    if args.action == "diff":
+        return _seed_diff(entry, checkout, roots, manifest,
+                          getattr(args, "tool", None))
     if args.action == "reset":
         if seeddecisions.reset(entry.target, user_claude):
             print(f"forgot the decision for {c('cyan', entry.target)} -- "
@@ -312,8 +478,11 @@ def _doctor(args) -> int:
                      + _seed_paths_line(live, repo_p, indent="       "))
         probe = co / "scripts" / "probe_layers.py"
         if probe.is_file():
-            findings.append(("info", f"payload ships a session verifier -- "
-                                     f"python {probe}"))
+            findings.append(("info", "this payload can check itself -- "
+                                     f"python {probe} asks a real Claude "
+                                     "session whether it actually loaded "
+                                     "these files (one model call; doctor "
+                                     "does not run it for you)"))
     tones = {"OK": "green", "WARN": "yellow", "FAIL": "bold_red",
              "info": "dim"}
     for level, line in findings:
@@ -586,7 +755,10 @@ the three answers when yours differs:
   look first      open the two printed paths in any diff tool
 """)
     _add_common(sd, suppress=True)
-    sd.add_argument("action", choices=("keep", "reset", "list"))
+    sd.add_argument("action", nargs="?", default=None,
+                    choices=("keep", "reset", "list", "diff"),
+                    help="leave it off to walk every open question one "
+                         "keystroke at a time")
     sd.add_argument("target", nargs="?", default=None,
                     help="the seed entry's target or repo path (e.g. CLAUDE.md)")
     sg = sd.add_mutually_exclusive_group()
@@ -595,6 +767,9 @@ the three answers when yours differs:
     sg.add_argument("--until-changed", action="store_true",
                     help="keep yours until the payload's seed changes, then "
                          "status asks again (the default)")
+    sd.add_argument("--tool", default=None,
+                    help="diff tool to open for `seed diff` and the walk's "
+                         "[d] key (default: whichever one ccs can resolve)")
 
     st = sub.add_parser("setup", help="configure this machine -- bare `setup` "
                         "runs the doctor check (what is configured, what is "
@@ -645,6 +820,31 @@ the words:
                                "`ccs setup -h`; seeded files in full in "
                                "`ccs seed -h`")
     _add_common(dr, suppress=True)
+
+    mg = sub.add_parser("migrate", help="take the payload's version of a "
+                        "starter file you already have -- keeps your copy, "
+                        "then proves both backups hold your original bytes",
+                        formatter_class=argparse.RawDescriptionHelpFormatter,
+                        description="Replace one of your starter files with "
+                                    "the payload's newer version, safely and "
+                                    "verifiably.",
+                        epilog="""what it does, in order:
+  1. hashes your live file
+  2. keeps a copy of it OUTSIDE the apply backup tree (written by a
+     different code path, so one bug cannot quietly spoil both copies)
+  3. takes the payload's version (`apply --reseed`, which makes its own
+     backup as always)
+  4. proves it: both copies must hash to your pre-migration bytes, and
+     the live file must now match the payload's
+
+  Bare `ccs migrate` lists the starter files this box could migrate.
+  --dry-run says what would happen and writes nothing.
+""")
+    _add_common(mg, suppress=True)
+    mg.add_argument("target", nargs="?", default=None,
+                    help="the starter file to migrate (e.g. CLAUDE.md); "
+                         "leave it off to list the candidates")
+    mg.add_argument("--dry-run", action="store_true")
     return p
 
 
@@ -1546,6 +1746,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "seed":
             args._box_tags = box.tags
             return _seed_verb(args, manifest, checkout, roots, repo)
+        if args.verb == "migrate":
+            args._box_tags = box.tags
+            return _migrate_verb(args, manifest, checkout, roots, repo)
         fetched, fetch_detail, behind = (render.UNSPECIFIED, "", None)
         pulled: tuple[int, bool, str] | None = None
         if args.verb in ("status", "collect", "apply"):
