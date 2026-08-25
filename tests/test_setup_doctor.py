@@ -82,6 +82,16 @@ def test_setup_box_needs_a_name_when_not_interactive(world, capsys, monkeypatch)
     assert "--name" in capsys.readouterr().err
 
 
+def test_bare_setup_runs_the_doctor(world, capsys):
+    # Bare `ccs setup` must land somewhere useful (the doctor overview),
+    # never an argparse usage error (user finding, 2026-08-25).
+    rc = main(_args(world, "setup"))
+    out = capsys.readouterr().out
+    assert rc == 1                              # missing box file -> WARN
+    assert "no box file" in out and "ccs setup box" in out
+    assert "doctor:" in out
+
+
 def test_setup_box_works_without_a_checkout(tmp_path, capsys):
     # The whole point: configuring a machine BEFORE everything else exists.
     user = tmp_path / "u"; user.mkdir()
@@ -162,7 +172,7 @@ def test_doctor_surfaces_seed_questions(world, capsys):
     capsys.readouterr()
     rc, out = _doctor(world, capsys)
     assert rc == 1
-    assert "seeded CLAUDE.md" in out and "yours or the payload's?" in out
+    assert "seeded CLAUDE.md" in out and "Yours or the payload's?" in out
 
 
 def test_doctor_reads_only(world, capsys):

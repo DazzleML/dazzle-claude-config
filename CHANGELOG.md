@@ -13,6 +13,8 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 - **Directory seeding**: a `seed-if-absent` entry whose repo path is a directory now seeds every absent file under it, recursively -- an existing live file is never touched, the deny-list applies per file, `--only` scopes inside the directory, and `--reseed` names a single file within it.
 
 ### Changed
+- Bare `ccs setup` now runs the doctor check instead of an argument error -- landing new users on "what is configured, what is not, and the command that fixes each". `ccs doctor` remains the conventional read-only name.
+- Seed lines in `status` and `doctor` speak plain language ("delivered once as a starter, then yours -- and yours now differs from the payload's version") and print BOTH file paths -- your copy and the payload's -- so "open them in your diff tool" is actually possible. `ccs seed -h` gained a glossary: what "seeded" means, where every file lives (including the decisions file), and the three answers.
 - **`status` stops overclaiming about seeded files**: the clean verdict now says "everything ccs syncs matches" and counts seeded files that are yours and not compared; a seeded file that is an UNMODIFIED older version of a seed the payload has since replaced gets an automatic pointer to `apply --reseed` (no question asked -- you never edited it); a customized one gets the yours-or-the-payload's question once, then respects your recorded answer. Comparison is line-ending-insensitive throughout -- measured on a real migration, a raw comparison matches nothing on Windows.
 
 ### Fixed

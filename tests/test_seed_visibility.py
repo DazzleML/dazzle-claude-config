@@ -97,15 +97,15 @@ def test_untouched_old_seed_auto_offers_reseed(world, capsys):
     # history stores LF. No question -- the box never edited it.
     (world["live"] / "CLAUDE.md").write_bytes(SEED_V1.replace(b"\n", b"\r\n"))
     rc, out = _status(world, capsys=capsys)
-    assert "an older seed, unmodified" in out
-    assert "ccs apply --reseed CLAUDE.md" in out
-    assert "yours or the payload's?" not in out
+    assert "an unchanged copy of an older starter" in out
+    assert "ccs apply --reseed" in out
+    assert "or the payload's?" not in out
 
 
 def test_customized_seed_asks_the_open_question(world, capsys):
     (world["live"] / "CLAUDE.md").write_bytes(CUSTOM)
     rc, out = _status(world, capsys=capsys)
-    assert "yours or the payload's?" in out
+    assert "Yours or the payload's?" in out
     assert "ccs seed keep CLAUDE.md" in out
 
 
@@ -114,10 +114,10 @@ def test_keep_always_silences_for_good(world, capsys):
     assert main(_ccs(world, "seed", "keep", "CLAUDE.md", "--always")) == 0
     capsys.readouterr()
     rc, out = _status(world, capsys=capsys)
-    assert "yours or the payload's?" not in out
+    assert "or the payload's?" not in out
     assert "not compared" in out            # the verdict clause still counts it
     rc, out = _status(world, "--long", capsys=capsys)
-    assert "yours (kept, always)" in out
+    assert "you chose to keep it, always" in out
 
 
 def test_keep_until_changed_reopens_when_the_seed_moves(world, capsys):
@@ -125,11 +125,11 @@ def test_keep_until_changed_reopens_when_the_seed_moves(world, capsys):
     assert main(_ccs(world, "seed", "keep", "CLAUDE.md")) == 0   # default mode
     capsys.readouterr()
     rc, out = _status(world, capsys=capsys)
-    assert "yours or the payload's?" not in out                  # quiet now
+    assert "or the payload's?" not in out                  # quiet now
     (world["co"] / "dotclaude" / "CLAUDE.md").write_bytes(b"# v3\n")
     _git(world["co"], "commit", "-qam", "seed v3")
     rc, out = _status(world, capsys=capsys)
-    assert "the seed changed since you chose to keep yours" in out
+    assert "the payload's starter changed since you chose to keep yours" in out
 
 
 def test_seed_reset_reopens_the_question(world, capsys):
@@ -138,7 +138,7 @@ def test_seed_reset_reopens_the_question(world, capsys):
     main(_ccs(world, "seed", "reset", "CLAUDE.md"))
     capsys.readouterr()
     rc, out = _status(world, capsys=capsys)
-    assert "yours or the payload's?" in out
+    assert "Yours or the payload's?" in out
 
 
 # -- the seed verb's edges ----------------------------------------------------
@@ -162,7 +162,7 @@ def test_malformed_decisions_file_warns_and_narrows(world, capsys):
     (world["live"] / "CLAUDE.md").write_bytes(CUSTOM)
     rc, out = _status(world, capsys=capsys)
     assert "not valid JSON" in out
-    assert "yours or the payload's?" in out   # narrowed to no-decisions, asks
+    assert "Yours or the payload's?" in out   # narrowed to no-decisions, asks
 
 
 def test_decisions_survive_a_round_trip(world):
@@ -207,4 +207,4 @@ def test_copy_covered_target_is_not_questioned(world, capsys):
     _git(world["co"], "add", "-A"); _git(world["co"], "commit", "-qam", "cover")
     (world["live"] / "CLAUDE.md").write_bytes(CUSTOM)
     rc, out = _status(world, capsys=capsys)
-    assert "yours or the payload's?" not in out
+    assert "or the payload's?" not in out

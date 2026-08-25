@@ -305,10 +305,11 @@ def _doctor(args) -> int:
                                   roots.get("USER_CLAUDE"))
         for e in serr:
             warn(e)
-        for t, s, _x in sf:
+        for t, s, live, repo_p in sf:
             if s in _SEED_ACTIONABLE:
                 _tone, msg = _SEED_ACTIONABLE[s]
-                warn(f"seeded {t}: " + msg.format(t=t))
+                warn(f"seeded {t}: " + msg.format(t=t) + "\n"
+                     + _seed_paths_line(live, repo_p, indent="       "))
         probe = co / "scripts" / "probe_layers.py"
         if probe.is_file():
             findings.append(("info", f"payload ships a session verifier -- "
@@ -553,7 +554,36 @@ day to day, once it is installed:
 
     sd = sub.add_parser("seed", help="seeded files are yours after delivery; "
                         "record the answer to \"yours or the payload's?\" "
-                        "(keep | reset | list)")
+                        "(keep | reset | list; -h explains the words)",
+                        formatter_class=argparse.RawDescriptionHelpFormatter,
+                        epilog="""what "seeded" means:
+  A seed-if-absent entry delivers a STARTER FILE once, to a machine that
+  lacks it. After that the file is yours: ccs never copies it again in
+  either direction, and status does not count it as drift.
+
+the words on a status/doctor line:
+  the payload's (copy / starter / seed)
+      the version in the checkout -- what a brand-new machine would get
+  your copy / yours
+      the live file it delivered, owned by this box ever since
+  "differs"
+      the two are no longer the same: you edited yours, the payload
+      shipped a newer starter, or both
+
+where the files live:
+  your copy       under ~/.claude or ~/claude (the entry's target --
+                  the exact path is printed under the status line)
+  the payload's   inside the checkout (printed alongside)
+  your decisions  ~/claude/ccs-seed-decisions.json (plain JSON, yours
+                  to edit; ccs seed reset removes one entry cleanly)
+
+the three answers when yours differs:
+  keep yours      ccs seed keep <file> --until-changed   (asks again only
+                  if the payload's starter changes; --always never asks)
+  take theirs     ccs apply --reseed <file>   (your copy is backed up
+                  first, to the apply run's backup folder)
+  look first      open the two printed paths in any diff tool
+""")
     _add_common(sd, suppress=True)
     sd.add_argument("action", choices=("keep", "reset", "list"))
     sd.add_argument("target", nargs="?", default=None,
@@ -565,11 +595,35 @@ day to day, once it is installed:
                     help="keep yours until the payload's seed changes, then "
                          "status asks again (the default)")
 
-    st = sub.add_parser("setup", help="configure this machine -- `setup box` "
-                        "declares its name and tags (the file the tags gate "
-                        "reads; never overwrites)")
+    st = sub.add_parser("setup", help="configure this machine -- bare `setup` "
+                        "runs the doctor check (what is configured, what is "
+                        "not, and the command that fixes each); `setup box` "
+                        "declares its name and tags (never overwrites)",
+                        formatter_class=argparse.RawDescriptionHelpFormatter,
+                        description="Configure this machine, or see how far "
+                                    "its configuration has gotten.",
+                        epilog="""the two forms:
+  ccs setup        the check-up: every piece of the environment, each with
+                   OK / WARN / FAIL and the command that fixes it (same as
+                   `ccs doctor`). Run this first when anything confuses you.
+  ccs setup box    declare this machine's identity, once
+
+the words:
+  checkout         your local clone of the payload repo -- the source of
+                   everything ccs delivers
+  box              one machine, under the name IT declares (never a
+                   hostname) -- written to ~/claude/ccs-box.json
+  tags             labels the box declares about itself (its own name is
+                   always one). Manifest entries marked with tags are
+                   delivered only to boxes that declare ALL of them --
+                   how per-machine and per-role files stay per-machine
+  seeded files     starter files delivered once and then owned by this
+                   box -- `ccs seed -h` explains those words in full
+""")
     _add_common(st, suppress=True)
-    st.add_argument("what", choices=("box",))
+    st.add_argument("what", choices=("box",), nargs="?", default=None,
+                    help="`box` declares this machine's name and tags; leave "
+                         "it off to run the check-up instead")
     st.add_argument("--name", default=None,
                     help="the box's declared name (lowercase; a chosen name, "
                          "not a hostname)")
@@ -579,7 +633,16 @@ day to day, once it is installed:
 
     dr = sub.add_parser("doctor", help="read-only environment check: "
                         "interpreter, git, checkout, remote, box identity, "
-                        "config, manifest, seeds. Changes nothing")
+                        "config, manifest, seeds. Changes nothing",
+                        formatter_class=argparse.RawDescriptionHelpFormatter,
+                        description="Check every piece of this machine's ccs "
+                                    "environment, read-only, and say what "
+                                    "would fix each gap. Changes nothing. "
+                                    "Exit 0 healthy / 1 warnings / 2 failures.",
+                        epilog="the words the findings use (box, tags, "
+                               "checkout, seeded) are explained in "
+                               "`ccs setup -h`; seeded files in full in "
+                               "`ccs seed -h`")
     _add_common(dr, suppress=True)
     return p
 
@@ -1132,7 +1195,7 @@ def _seed_findings(manifest, checkout, roots, repo, box_tags, user_claude):
         if not repo_base.is_file():
             continue    # directory seeds: per-file reporting is #28 follow-up
         if not live_base.is_file():
-            findings.append((entry.target, "absent", ""))
+            findings.append((entry.target, "absent", live_base, repo_base))
             continue
         try:
             live, seed = live_base.read_bytes(), repo_base.read_bytes()
@@ -1141,41 +1204,51 @@ def _seed_findings(manifest, checkout, roots, repo, box_tags, user_claude):
         current_sha = _norm_sha(seed)
         live_sha = _norm_sha(live)
         if live_sha == current_sha:
-            findings.append((entry.target, "matches", ""))
+            findings.append((entry.target, "matches", live_base, repo_base))
             continue
         hist = repo.seed_history(entry.repo) if repo is not None else []
         if live_sha in {sha for _c, sha in hist} - {current_sha}:
-            findings.append((entry.target, "untouched-old", ""))
+            findings.append((entry.target, "untouched-old", live_base, repo_base))
             continue
         rec = dec.by_target.get(entry.target)
-        if rec is None:
-            findings.append((entry.target, "open", current_sha))
-        elif rec.get("mode") == "always":
-            findings.append((entry.target, "kept-always", ""))
-        elif rec.get("seed_blob") == current_sha:
-            findings.append((entry.target, "kept-current", ""))
-        else:
-            findings.append((entry.target, "reopened", current_sha))
+        state = ("open" if rec is None else
+                 "kept-always" if rec.get("mode") == "always" else
+                 "kept-current" if rec.get("seed_blob") == current_sha else
+                 "reopened")
+        findings.append((entry.target, state, live_base, repo_base))
     return findings, dec.errors
 
 
+# Plain words, no project jargon: these lines are read by people who have
+# never heard "seed" used this way. Every actionable line says what the
+# file IS, what happened, and all three answers -- and the block prints
+# both file paths, because advice about files nobody can find is noise
+# (user finding, 2026-08-25).
 _SEED_ACTIONABLE = {
-    "untouched-old": ("yellow", "an older seed, unmodified -- the payload "
-                                "replaced it; ccs apply --reseed {t} takes the "
-                                "new one (your copy is backed up)"),
-    "open": ("yellow", "differs from the current seed -- yours or the "
-                       "payload's? ccs seed keep {t} [--always|--until-changed] "
-                       "to keep yours, or ccs apply --reseed {t}"),
-    "reopened": ("yellow", "the seed changed since you chose to keep yours -- "
-                           "ccs seed keep {t} again, ccs apply --reseed {t}, "
-                           "or ccs seed reset {t}"),
+    "untouched-old": ("yellow", "an unchanged copy of an older starter (the "
+                                "payload has a newer one). ccs apply --reseed "
+                                "{t} takes it; your copy is backed up first"),
+    "open": ("yellow", "delivered once as a starter, then yours (and yours "
+                       "now differs from the payload's version). Yours or the "
+                       "payload's? keep yours: ccs seed keep {t}; take the "
+                       "payload's: ccs apply --reseed {t} (backs yours up); "
+                       "or open both files below in your diff tool first"),
+    "reopened": ("yellow", "the payload's starter changed since you chose to "
+                           "keep yours. Keep it again: ccs seed keep {t}; "
+                           "take the payload's: ccs apply --reseed {t}; or "
+                           "compare the files below"),
 }
 _SEED_QUIET = {
-    "matches": "matches the seed",
-    "kept-always": "yours (kept, always)",
-    "kept-current": "yours (kept until the seed changes)",
-    "absent": "will seed on the next ccs apply",
+    "matches": "same as the payload's copy",
+    "kept-always": "yours (you chose to keep it, always)",
+    "kept-current": "yours (kept until the payload's copy changes)",
+    "absent": "will be delivered on the next ccs apply",
 }
+
+
+def _seed_paths_line(live, repo_p, indent: str = "            ") -> str:
+    return (f"{indent}" + c("dim", f"yours: {live}") + "\n"
+            f"{indent}" + c("dim", f"the payload's: {repo_p}"))
 
 
 def _print_seed_block(findings, errors, long_form: bool) -> None:
@@ -1184,18 +1257,20 @@ def _print_seed_block(findings, errors, long_form: bool) -> None:
     are untouched, the ownership contract stands)."""
     for e in errors:
         print(c("yellow", f"warning: {e}"))
-    actionable = [(t, s) for t, s, _ in findings if s in _SEED_ACTIONABLE]
-    quiet = [(t, s) for t, s, _ in findings if s in _SEED_QUIET]
+    actionable = [f for f in findings if f[1] in _SEED_ACTIONABLE]
+    quiet = [f for f in findings if f[1] in _SEED_QUIET]
     if not actionable and not (long_form and quiet):
         return
     print(f"{c('bold', 'seeded')}    " +
-          c("dim", "(yours after delivery -- ccs never overwrites these; "
-                   "not counted as drift)"))
-    for t, s in actionable:
+          c("dim", "(starter files, delivered once and then yours -- ccs "
+                   "never overwrites these; not counted as drift. "
+                   "ccs seed -h explains)"))
+    for t, s, live, repo_p in actionable:
         tone, msg = _SEED_ACTIONABLE[s]
         print(f"          {c(tone, t)} {c(tone, '-- ' + msg.format(t=t))}")
+        print(_seed_paths_line(live, repo_p))
     if long_form:
-        for t, s in quiet:
+        for t, s, _live, _repo in quiet:
             print(f"          {c('dim', t)} {c('dim', '-- ' + _SEED_QUIET[s])}")
 
 
@@ -1368,7 +1443,7 @@ def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None,
         # "your live config and the checkout match" while a seeded file
         # differs by a thousand lines was measured to mislead exactly the
         # person mid-migration.
-        n_own = sum(1 for _t, s, _x in seed_findings
+        n_own = sum(1 for _t, s, *_ in seed_findings
                     if s not in ("matches", "absent"))
         clause = ""
         if n_own:
@@ -1442,6 +1517,12 @@ def main(argv: list[str] | None = None) -> int:
     # on an environment that is not configured yet, which is exactly the
     # state _setup() refuses.
     if args.verb == "setup":
+        if getattr(args, "what", None) is None:
+            # Bare `ccs setup` lands you somewhere useful instead of a usage
+            # error: the doctor check IS the "how is setup going" overview,
+            # with the command that fixes each gap (user request, 2026-08-25
+            # -- the csb setup interaction shape).
+            return _doctor(args)
         return _setup_box(args)
     if args.verb == "doctor":
         return _doctor(args)
