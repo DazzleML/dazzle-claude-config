@@ -91,7 +91,7 @@ def test_status_reports_behind_after_the_other_machine_pushes(fleet, capsys):
     _push_from_other(fleet)
     rc = main(_ccs(fleet, "status"))
     out = capsys.readouterr().out
-    assert "1 behind vs origin/main -- git pull" in out, out
+    assert "1 behind -- ccs git pull" in out, out   # the remote leg (#22 wording)
     assert "in sync" not in out
     assert "git pull" in out                     # the verdict line says what to do
     assert rc == 1                               # behind is drift, even with live == checkout
@@ -100,7 +100,7 @@ def test_status_reports_behind_after_the_other_machine_pushes(fleet, capsys):
 def test_status_in_sync_only_after_a_successful_fetch(fleet, capsys):
     rc = main(_ccs(fleet, "status"))
     out = capsys.readouterr().out
-    assert "on main, in sync with origin/main" in out
+    assert "main, in sync" in out                  # the remote leg (#22 wording)
     assert "as last fetched" not in out and "unknown" not in out
     assert "status: clean" in out and rc == 0
 
@@ -128,7 +128,7 @@ def test_no_fetch_flag_skips_the_network_and_says_so(fleet, capsys, monkeypatch)
     rc = main(_ccs(fleet, "status", "--no-fetch"))
     out = capsys.readouterr().out
     assert calls == []                           # never fetched
-    assert "in sync with origin/main as last fetched" in out   # the stale tracking ref, labelled
+    assert "in sync as last fetched" in out        # the stale tracking ref, labelled (#22)
     assert rc == 0
 
 
@@ -228,7 +228,7 @@ def test_no_upstream_means_no_fetch_and_old_wording(tmp_path, capsys, monkeypatc
     rc = main(["--checkout-dir", str(co), "--claude-dir", str(live), "--user-claude", str(user),
                "--no-color", "status"])
     out = capsys.readouterr().out
-    assert "on main, no upstream configured" in out
+    assert "main, no upstream configured" in out   # remote leg wording (#22)
     assert ran == [] and rc == 0
 
 

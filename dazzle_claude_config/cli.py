@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import subprocess
 import sys
 from pathlib import Path
 
@@ -42,6 +43,77 @@ def _add_common(parser, suppress=False):
                         default=argparse.SUPPRESS if suppress else False,
                         help="do not fetch the upstream first; the branch line then "
                              "reflects the last fetch, and says so (config: fetch)")
+
+
+# The `git` verb splits argv BEFORE argparse ever runs (the dazzlecmd
+# dispatch_tool pattern, and a candidate for dazzle-clilib extraction):
+# everything after the literal token `git` belongs to git, verbatim --
+# including tokens that look like ccs flags. Only these true globals may
+# appear before the verb; the two tuples are cross-checked against the
+# parser by a test so they cannot drift from _add_common.
+_VALUE_GLOBALS = ("--checkout-dir", "--claude-dir", "--user-claude")
+_FLAG_GLOBALS = ("--no-color", "--no-fetch")
+
+
+def _split_git_passthrough(argv: list[str]):
+    """(seen_globals, git_args) when this argv is a `git` passthrough run,
+    else None (let argparse have it). Never consumes anything after `git`."""
+    seen: dict[str, str | bool] = {}
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        if tok == "git":
+            return seen, argv[i + 1:]
+        if tok in _VALUE_GLOBALS:
+            if i + 1 < len(argv):
+                seen[tok] = argv[i + 1]
+            i += 2
+            continue
+        head, _, val = tok.partition("=")
+        if head in _VALUE_GLOBALS and val:
+            seen[head] = val
+            i += 1
+            continue
+        if tok in _FLAG_GLOBALS:
+            seen[tok] = True
+            i += 1
+            continue
+        return None  # another verb, -h, --version, or a typo: argparse's job
+    return None
+
+
+def _run_git_verb(seen: dict, git_args: list[str]) -> int:
+    """`ccs git <anything>` == `git -C <resolved checkout> <anything>`.
+
+    The checkout resolves exactly as for every other verb; validation goes
+    through CheckoutRepo so the home-repo guards (A4) hold here too. Args
+    and stdio pass through untouched -- pagers, prompts, and credential
+    helpers behave as if the user had cd'd there -- and git's exit code is
+    ccs's exit code.
+    """
+    render.init(bool(seen.get("--no-color")))
+    co = seen.get("--checkout-dir")
+    checkout = Path(co).expanduser().resolve() if co else default_checkout_dir()
+    if not checkout.is_dir():
+        # Same pre-check _setup() gives every other verb. Without it,
+        # CheckoutRepo's rev-parse probe hands subprocess a nonexistent
+        # cwd, which raises NotADirectoryError (WinError 267) -- an
+        # OSError, not a GitError -- and the user gets a traceback instead
+        # of an answer (found by the v0.5.1 checklist run).
+        print(c("bold_red", "error") + f": checkout not found: {checkout}",
+              file=sys.stderr)
+        return EXIT_ERROR
+    try:
+        CheckoutRepo(checkout)
+    except (GitError, GitopsSafetyError) as e:
+        print(c("bold_red", "error") + f": {e}", file=sys.stderr)
+        return EXIT_ERROR
+    if not git_args:
+        print(f"{c('bold', 'checkout')}  {c('cyan', str(checkout))}")
+        print(c("dim", "ccs git <anything> runs git there, from anywhere: "
+                       "ccs git pull / ccs git push / ccs git log --oneline"))
+        return EXIT_CLEAN
+    return subprocess.call(["git", "-C", str(checkout), *git_args])
 
 
 _MERGE_HELP = dict(
@@ -110,7 +182,10 @@ day to day, once it is installed:
   ccs merge                      # files changed on BOTH sides -- see the warning below
   ccs collect                    # one-sided: your live edits -> the checkout
   ccs apply                      # one-sided: the checkout -> your live config
-  git -C <checkout> add -A && git commit && git push    # share it with your other machines
+  ccs git add -A && ccs git commit && ccs git push   # share it, from any directory
+
+  Directions are named from the payload's side: the checkout COLLECTS from a
+  box; its contents APPLY to a box (the same `apply` as chezmoi and kubectl).
 
   A file that changed on BOTH sides needs `ccs merge`. `collect` and `apply`
   are ONE-WAY copies, so running either on such a file discards whatever the
@@ -131,8 +206,10 @@ day to day, once it is installed:
     _add_common(p)
     sub = p.add_subparsers(dest="verb", required=True)
 
-    for verb, doc in (("collect", "copy live config INTO the checkout (guarded)"),
-                      ("apply", "copy checkout config INTO the live tree (backed up)"),
+    for verb, doc in (("collect", "live -> checkout: gather this box's changes "
+                                  "into the payload (guarded)"),
+                      ("apply", "checkout -> live: deliver the payload's config "
+                                "to this box (backed up)"),
                       ("merge", "resolve files that differ on BOTH sides, in your diff tool"),
                       ("status", "three-way drift report (exit 1 when drift)"),
                       ("diff", "list per-file differences")):
@@ -218,6 +295,15 @@ day to day, once it is installed:
                                 "line budget")
             g.add_argument("--compact", action="store_true",
                            help="one line per entry, never the per-file breakdown")
+            gp = sp.add_mutually_exclusive_group()
+            gp.add_argument("--pull", dest="pull", action="store_true", default=None,
+                            help="when the fetch finds the checkout behind and "
+                                 "fast-forwardable, fast-forward it first and report "
+                                 "the real drift (config: auto_pull). Never merges, "
+                                 "rebases, or stashes -- a divergent branch is "
+                                 "reported, not resolved")
+            gp.add_argument("--no-pull", dest="pull", action="store_false",
+                            help="never pull, even with auto_pull set in the config")
         if verb == "diff":
             sp.add_argument("path", nargs="?", default=None,
                             help="show the actual line-by-line difference for one "
@@ -245,6 +331,14 @@ day to day, once it is installed:
                                  "into this run's backup dir and write the payload's "
                                  "fresh seed over it -- the migration move for a box "
                                  "that predates the seed")
+    # Registered for `ccs -h` and as a fallback; the real dispatch happens
+    # BEFORE argparse in _split_git_passthrough (see the note there), so
+    # git's own flags are never mistaken for ccs's.
+    gp = sub.add_parser("git", add_help=False,
+                        help="run git in the checkout, from anywhere -- everything "
+                             "after `git` goes to git verbatim (ccs git pull, "
+                             "ccs git push, ccs git log ...)")
+    gp.add_argument("gitargs", nargs=argparse.REMAINDER)
     return p
 
 
@@ -760,12 +854,15 @@ def _warn_only_miss(args, manifest, box) -> None:
 
 def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None,
                   remote=(render.UNSPECIFIED, "", None),
-                  manifest=None, box=None) -> None:
+                  manifest=None, box=None, pulled=None) -> None:
     """The status report, written for someone who has not read the docs.
 
-    Three legs, because that is what "in sync" actually means here:
-    live vs checkout (the entries), checkout vs remote (branch tracking),
-    and the checkout's own uncommitted work (git's territory, not ours).
+    Three legs, because that is what "in sync" actually means here -- and
+    each is a labelled PLACE (#22): `remote` (the hub every other machine
+    syncs through), `checkout` (the folder), `live` (the territories). The
+    remote's pull state used to ride as a clause under `checkout`, burying
+    the one question a fleet user asks first: is there anything on the
+    server my machines have not seen?
     """
     files = sum(d.total for d in all_diffs)
     # Attribute every differing file ONCE, through the guard's own infer_base.
@@ -778,12 +875,25 @@ def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None,
         if d.mismatch or not d.modified:
             continue
         classified[id(d)] = {rel: _classify(co_path, d, rel) for rel in d.modified}
-    print(f"{c('bold', 'checkout')}  {c('cyan', str(checkout))}")
+    branch_raw = repo.branch_info() if repo is not None else ""
     if repo is not None:
         fetched, detail = remote[0], remote[1]
-        line = render.humanize_branch(repo.branch_info(), fetched, detail)
-        tone = ("yellow" if fetched is False or "behind" in line else "dim")
-        print(f"          {c(tone, line)}")
+        host = render.remote_host(repo.remote_url())
+        state = render.humanize_remote(branch_raw, fetched, detail, pulled)
+        tone = ("yellow" if fetched is False or "behind" in state
+                or "diverged" in state else "dim")
+        if pulled is not None and pulled[1]:
+            tone = "green"
+        if host:
+            print(f"{c('bold', 'remote')}    {c('cyan', host)}{c('dim', ':')} "
+                  f"{c(tone, state)}")
+        else:
+            print(f"{c('bold', 'remote')}    {c(tone, state)} "
+                  f"{c('dim', '(no remote configured)')}")
+    name = render.branch_name(branch_raw)
+    suffix = f"  {c('dim', f'(on {name})')}" if name else ""
+    print(f"{c('bold', 'checkout')}  {c('cyan', str(checkout))}{suffix}")
+    if repo is not None:
         dirty = len([l for l in repo.porcelain() if l.strip()])
         if dirty:
             # Build the plural separately: reusing the outer f-string's quote
@@ -947,7 +1057,20 @@ def _never_crash_on_content() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     _never_crash_on_content()
-    args = _build_parser().parse_args(argv)
+    raw_argv = list(sys.argv[1:]) if argv is None else list(argv)
+    split = _split_git_passthrough(raw_argv)
+    if split is not None:
+        return _run_git_verb(*split)
+    args = _build_parser().parse_args(raw_argv)
+    if args.verb == "git":
+        # Unreachable in practice (the pre-dispatch above intercepts every
+        # well-formed `git` run); kept so the subparser stays honest.
+        seen = {}
+        if getattr(args, "checkout_dir", None):
+            seen["--checkout-dir"] = args.checkout_dir
+        if getattr(args, "no_color", False):
+            seen["--no-color"] = True
+        return _run_git_verb(seen, list(args.gitargs or []))
     render.init(getattr(args, "no_color", False))
     try:
         manifest, checkout, roots, repo = _setup(args)
@@ -966,8 +1089,30 @@ def main(argv: list[str] | None = None) -> int:
         for err in box.errors:
             print(c('yellow', f'warning: box config: {err}'))
         fetched, fetch_detail, behind = (render.UNSPECIFIED, "", None)
+        pulled: tuple[int, bool, str] | None = None
         if args.verb in ("status", "collect", "apply"):
             fetched, fetch_detail, behind = _remote_state(repo, cfg, args)
+
+        # AUTO-PULL (status only, opt-in). The pull runs BEFORE the file
+        # comparison below, so the drift table describes post-pull reality
+        # in the same run. Only after a fetch that succeeded THIS run --
+        # fast-forwarding onto stale knowledge answers a question nobody
+        # asked -- and strictly --ff-only: divergence and dirty files are
+        # reported in git's own words, never resolved on the user's behalf.
+        if args.verb == "status" and behind and repo is not None:
+            want = getattr(args, "pull", None)
+            if want is None:
+                want = bool(cfg.get("auto_pull"))
+            if want and fetched is True:
+                ahead, _ = repo.ahead_behind()
+                if ahead:
+                    pulled = (behind, False,
+                              f"{ahead} local commit(s) the remote lacks -- diverged")
+                else:
+                    ok, msg = repo.ff_update()
+                    pulled = (behind, ok, "" if ok else msg)
+                    if ok:
+                        behind = 0  # the drift verdict below is post-pull truth
 
         if args.verb in ("collect", "apply") and behind:
             # A one-way verb against a checkout that is behind installs or
@@ -1255,7 +1400,7 @@ def main(argv: list[str] | None = None) -> int:
             _print_status(checkout, repo, roots, all_diffs, diffs,
                           userconfig.load(roots.get('USER_CLAUDE'), over),
                           remote=(fetched, fetch_detail, behind),
-                          manifest=manifest, box=box)
+                          manifest=manifest, box=box, pulled=pulled)
             # Behind the upstream is drift too: the checkout is not the
             # latest the fleet has, even when live matches it exactly.
             return EXIT_CLEAN if not diffs and not behind else EXIT_DRIFT

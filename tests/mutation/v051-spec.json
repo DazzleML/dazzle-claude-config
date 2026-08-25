@@ -1,0 +1,97 @@
+{
+ "mutations": [
+  {
+   "id": "M1",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "        if tok in _VALUE_GLOBALS:\n            if i + 1 < len(argv):\n                seen[tok] = argv[i + 1]\n            i += 2\n            continue",
+   "mutated": "        if tok in _VALUE_GLOBALS:\n            if i + 1 <= len(argv):\n                seen[tok] = argv[i + 1]\n            i += 2\n            continue",
+   "note": "Off-by-one boundary: a value global as the final token now indexes past argv and raises IndexError instead of being tolerated."
+  },
+  {
+   "id": "M2",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "        tok = argv[i]\n        if tok == \"git\":\n            return seen, argv[i + 1:]",
+   "mutated": "        tok = argv[i]\n        if tok == \"git\":\n            return seen, argv[i:]",
+   "note": "Wrong slice start: the literal git verb leaks into git_args."
+  },
+  {
+   "id": "M3",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "        return EXIT_CLEAN\n    return subprocess.call([\"git\", \"-C\", str(checkout), *git_args])",
+   "mutated": "        return EXIT_CLEAN\n    return subprocess.call([\"git\", *git_args, \"-C\", str(checkout)])",
+   "note": "Swapped argument order: git runs in the caller cwd instead of the checkout."
+  },
+  {
+   "id": "M4",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "            want = getattr(args, \"pull\", None)\n            if want is None:\n                want = bool(cfg.get(\"auto_pull\"))",
+   "mutated": "            want = getattr(args, \"pull\", None)\n            if want is not None:\n                want = bool(cfg.get(\"auto_pull\"))",
+   "note": "None-check flip: config opt-in never activates; explicit flag overwritten."
+  },
+  {
+   "id": "M5",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "            if want and fetched is True:\n                ahead, _ = repo.ahead_behind()",
+   "mutated": "            if want or fetched is True:\n                ahead, _ = repo.ahead_behind()",
+   "note": "and->or swap: auto-pull runs without opt-in."
+  },
+  {
+   "id": "M6",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "                    ok, msg = repo.ff_update()\n                    pulled = (behind, ok, \"\" if ok else msg)",
+   "mutated": "                    ok, msg = repo.ff_update()\n                    pulled = (behind, ok, msg if ok else \"\")",
+   "note": "Wrong tuple element: refusal reason dropped on failure."
+  },
+  {
+   "id": "M7",
+   "file": "dazzle_claude_config/gitops.py",
+   "original": "        up = self.upstream()\n        if not up:\n            return False, \"no upstream configured\"",
+   "mutated": "        up = self.upstream()\n        if not up:\n            return True, \"no upstream configured\"",
+   "note": "Boolean flip: no-upstream reports success."
+  },
+  {
+   "id": "M8",
+   "file": "dazzle_claude_config/gitops.py",
+   "original": "        rc, out, err = _run([\"merge\", \"--ff-only\", up], cwd=self.path)\n        if rc != 0:\n            first = (err.strip() or out.strip()).splitlines()\n            return False, first[0] if first else \"merge --ff-only failed\"",
+   "mutated": "        rc, out, err = _run([\"merge\", \"--ff-only\", up], cwd=self.path)\n        if rc != 0:\n            first = (err.strip() or out.strip()).splitlines()\n            return False, first[-1] if first else \"merge --ff-only failed\"",
+   "note": "Wrong index: last stderr line instead of first."
+  },
+  {
+   "id": "M9",
+   "file": "dazzle_claude_config/gitops.py",
+   "original": "        rc, out, _ = _run([\"remote\", \"get-url\", \"origin\"], cwd=self.path)\n        return out.strip() if rc == 0 and out.strip() else None",
+   "mutated": "        rc, out, _ = _run([\"remote\", \"get-url\", \"origin\"], cwd=self.path)\n        return out if rc == 0 and out.strip() else None",
+   "note": "Dropped .strip() on returned URL."
+  },
+  {
+   "id": "M10",
+   "file": "dazzle_claude_config/render.py",
+   "original": "        rest = m.group(\"rest\").rstrip(\"/\")\n        return rest[:-4] if rest.endswith(\".git\") else rest",
+   "mutated": "        rest = m.group(\"rest\").rstrip(\"/\")\n        return rest[:-3] if rest.endswith(\".git\") else rest",
+   "note": "Off-by-one suffix strip: trailing dot survives."
+  },
+  {
+   "id": "M11",
+   "file": "dazzle_claude_config/render.py",
+   "original": "        path = m.group(\"path\").rstrip(\"/\")\n        if path.endswith(\".git\"):\n            path = path[:-4]\n        return f\"{m.group('host')}/{path}\"",
+   "mutated": "        path = m.group(\"path\").rstrip(\"/\")\n        if path.endswith(\".git\"):\n            path = path[:-4]\n        return f\"{path}/{m.group('host')}\"",
+   "note": "Swapped format arguments: scp remotes render backwards."
+  },
+  {
+   "id": "M12",
+   "file": "dazzle_claude_config/render.py",
+   "original": "    if behind:\n        hint = \"ccs git pull\" if fetched else \"ccs git fetch to confirm\"\n        stale = \"\" if fetched else \" as last fetched\"",
+   "mutated": "    if behind:\n        hint = \"ccs git fetch to confirm\" if fetched else \"ccs git pull\"\n        stale = \"\" if fetched else \" as last fetched\"",
+   "note": "Swapped branch values: inverted hints."
+  }
+ ],
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-x",
+  "tests/test_remote_ergonomics.py",
+  "tests/test_remote_awareness.py"
+ ]
+}

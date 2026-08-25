@@ -1,0 +1,41 @@
+{
+ "mutations": [
+  {
+   "id": "M6",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "                    ok, msg = repo.ff_update()\n                    pulled = (behind, ok, \"\" if ok else msg)",
+   "mutated": "                    ok, msg = repo.ff_update()\n                    pulled = (behind, ok, msg if ok else \"\")",
+   "note": "Wrong tuple element: refusal reason dropped on failure."
+  },
+  {
+   "id": "M7",
+   "file": "dazzle_claude_config/gitops.py",
+   "original": "        up = self.upstream()\n        if not up:\n            return False, \"no upstream configured\"",
+   "mutated": "        up = self.upstream()\n        if not up:\n            return True, \"no upstream configured\"",
+   "note": "Boolean flip: no-upstream reports success."
+  },
+  {
+   "id": "M8",
+   "file": "dazzle_claude_config/gitops.py",
+   "original": "        rc, out, err = _run([\"merge\", \"--ff-only\", up], cwd=self.path)\n        if rc != 0:\n            first = (err.strip() or out.strip()).splitlines()\n            return False, first[0] if first else \"merge --ff-only failed\"",
+   "mutated": "        rc, out, err = _run([\"merge\", \"--ff-only\", up], cwd=self.path)\n        if rc != 0:\n            first = (err.strip() or out.strip()).splitlines()\n            return False, first[-1] if first else \"merge --ff-only failed\"",
+   "note": "Wrong index: last stderr line instead of first."
+  },
+  {
+   "id": "M9",
+   "file": "dazzle_claude_config/gitops.py",
+   "original": "        rc, out, _ = _run([\"remote\", \"get-url\", \"origin\"], cwd=self.path)\n        return out.strip() if rc == 0 and out.strip() else None",
+   "mutated": "        rc, out, _ = _run([\"remote\", \"get-url\", \"origin\"], cwd=self.path)\n        return out if rc == 0 and out.strip() else None",
+   "note": "Dropped .strip() on returned URL."
+  }
+ ],
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-x",
+  "tests/test_remote_ergonomics.py",
+  "tests/test_remote_awareness.py"
+ ]
+}

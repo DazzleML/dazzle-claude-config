@@ -7,7 +7,7 @@
 [![Installs](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/djdarcy/5329fbe75d9bbd8597cdc45863a22878/raw/installs.json)](https://dazzleml.github.io/dazzle-claude-config/stats/#installs)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20BSD-lightgrey.svg)](docs/platforms.md)
 
-**Git-backed sync for your Claude Code configuration (skills, commands, agents, hooks, and `CLAUDE.md`) across every machine you work on, with credential guards on the way in and backups on every write.**
+**Git-backed sync for your Claude Code configuration (skills, commands, agents, hooks, and `CLAUDE.md`) across every machine you work on, with credential protection on the way in and backups on every write.**
 
 ## The Problem
 
@@ -15,7 +15,7 @@ Your Claude Code setup is earned. Skills you refined over months, commands that 
 
 Then you get a laptop. Or a work box. Or you reinstall. So you copy the folder by hand -- and now the two drift apart, silently, because there is nothing to tell you which one is newer. Worse, `~/.claude` is not only config: it also holds `.credentials.json`, OAuth state, plugin caches, and session databases. Copy it wholesale into a git repo to "back it up" and you have published an API key. There is no history either, so when a config change makes Claude behave oddly, there is nothing to diff and nothing to roll back to.
 
-**ccs** treats your configuration as a git repository -- a *payload* -- and moves files between that repo's checkout and your live `~/.claude`. `collect` copies a live config in, refusing credentials rather than trusting you to notice them. `apply` copies config back out, backing up every file it overwrites. When a file changed on *both* machines, neither direction is safe -- so `merge` opens your own diff tool (Beyond Compare, vimdiff, WinMerge, whatever git already knows) with both versions and a common ancestor, and installs nothing until the result is checked for content that went missing. Because a payload is just a repo, it can be yours, someone else's, or a fork of theirs.
+**ccs** treats your configuration as a git repository, a *payload* if you will, and moves files between that repo's checkout and your live `~/.claude`. `collect` copies a live config in, refusing credentials rather than trusting you to notice them. `apply` copies config back out, backing up every file it overwrites. When a file changed on *both* machines, neither direction is safe -- so `merge` opens your own diff tool (Beyond Compare, vimdiff, WinMerge, whatever git already knows) with both versions and a common ancestor, and installs nothing until the result is checked for content that went missing. Because a payload is just a repo, it can be yours, someone else's, or a fork of theirs.
 
 > [!NOTE]
 > **Alpha software (v0.4.0) -- working, in daily use, surfaces not frozen.** It manages my own configs across machines. The core loop (`collect` / `apply` / `merge` / `status` / `diff`, deny-list + credential scanning, backups, staged removals, selective sync) are functional; the Phase 2 set (templated settings rendering, declarative plugin installs, and one-command `ccs bootstrap` onboarding) is still a WIP, and command surfaces may change between versions until it does. `merge` resolves against a common ancestor when one can be trusted and says so plainly when it cannot; AI-assisted resolution is stubbed but not yet implemented. Please [file issues](https://github.com/DazzleML/dazzle-claude-config/issues) for anything rough. And, as with any sync tool, keep an independent copy of anything irreplaceable.
@@ -79,8 +79,8 @@ A machine whose file forked *before* the payload existed has no ancestor in the 
 `ccs status` answers "am I in sync?" across all three legs -- your live config vs the checkout, the checkout vs its remote, and any uncommitted work in the checkout:
 
 ```
-checkout  ~/claude/dazzle-claude-code-config
-          on main, in sync with origin/main
+remote    github.com/you/your-config-payload: main, in sync
+checkout  ~/claude/dazzle-claude-code-config  (on main)
 compared  83 files across 11 entries of config
           ~/.claude
           ~/claude

@@ -151,6 +151,30 @@ class CheckoutRepo:
             raise GitError(f"push failed: {err.strip() or out.strip()}")
         return (err or out).strip()  # git push reports to stderr
 
+    def ff_update(self) -> tuple[bool, str]:
+        """Fast-forward HEAD to the upstream's already-fetched state.
+
+        `merge --ff-only @{u}`, not `pull`: every caller runs after this
+        process's one fetch, so a pull's second network hop would be waste,
+        and --ff-only is the entire safety contract -- a divergent branch
+        or a dirty file in the way makes git refuse, and that refusal comes
+        back verbatim as (False, reason) instead of raising. Nothing is
+        ever merged, rebased, or stashed on the user's behalf.
+        """
+        up = self.upstream()
+        if not up:
+            return False, "no upstream configured"
+        rc, out, err = _run(["merge", "--ff-only", up], cwd=self.path)
+        if rc != 0:
+            first = (err.strip() or out.strip()).splitlines()
+            return False, first[0] if first else "merge --ff-only failed"
+        return True, out.strip()
+
+    def remote_url(self) -> str | None:
+        """The origin URL, or None when no remote named origin exists."""
+        rc, out, _ = _run(["remote", "get-url", "origin"], cwd=self.path)
+        return out.strip() if rc == 0 and out.strip() else None
+
     def check_ignored(self, rel_paths: list[str]) -> list[str]:
         """A8: which of these repo-relative paths does git ignore/exclude?
 

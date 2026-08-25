@@ -62,6 +62,14 @@ DEFAULTS = {
     # nothing is lost. True turns the warning into a refusal (exit 1) for
     # users who want the pull-first loop enforced. --require-current per run.
     "require_current": False,
+
+    # True lets `status` close the loop it used to describe: when the fetch
+    # finds the checkout behind AND fast-forwardable, status fast-forwards
+    # first and then reports the real drift, saying it did. Strictly ff-only:
+    # a divergent branch or a dirty file in the way is reported, never
+    # merged, rebased, or stashed. status only -- apply/collect keep their
+    # warning (see require_current). --pull / --no-pull per run.
+    "auto_pull": False,
 }
 
 ENV_MAP = {
@@ -74,6 +82,7 @@ ENV_MAP = {
     "fetch": "CCS_FETCH",
     "fetch_timeout": "CCS_FETCH_TIMEOUT",
     "require_current": "CCS_REQUIRE_CURRENT",
+    "auto_pull": "CCS_AUTO_PULL",
 }
 
 VALID_ON_DIVERGENCE = {"prompt", "skip", "force"}

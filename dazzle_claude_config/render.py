@@ -118,3 +118,85 @@ def humanize_branch(raw: str, fetched=UNSPECIFIED, detail: str = "") -> str:
     if behind and fetched is not UNSPECIFIED:
         line += " -- git pull" if fetched else " -- git fetch to confirm"
     return line
+
+
+def branch_name(raw: str) -> str | None:
+    """Just the local branch name out of `git status -sb`'s first line."""
+    m = _BRANCH_RE.match(raw or "")
+    return m.group("local") if m else None
+
+
+def remote_host(url: str | None) -> str | None:
+    """Boil a git remote URL down to `host/owner/repo` for the status line.
+
+    https://github.com/o/r.git  -> github.com/o/r
+    git@github.com:o/r.git      -> github.com/o/r
+    ssh://git@host:2222/o/r.git -> host:2222/o/r
+    Anything unparseable comes back AS IS -- a raw URL on the remote line
+    beats a clever parse that lies about where the remote lives (#22's
+    brutal-fallback rule). None means no remote at all.
+    """
+    if not url:
+        return None
+    u = url.strip()
+    m = re.match(r"^(?:https?|ssh|git)://(?:[^/@]+@)?(?P<rest>.+)$", u)
+    if m:
+        rest = m.group("rest").rstrip("/")
+        return rest[:-4] if rest.endswith(".git") else rest
+    m = re.match(r"^(?:[^@\s]+@)(?P<host>[^:\s]+):(?P<path>[^\s]+)$", u)
+    if m:
+        path = m.group("path").rstrip("/")
+        if path.endswith(".git"):
+            path = path[:-4]
+        return f"{m.group('host')}/{path}"
+    return u
+
+
+def humanize_remote(raw: str, fetched=UNSPECIFIED, detail: str = "",
+                    pulled: tuple[int, bool, str] | None = None) -> str:
+    """The remote leg's state: humanize_branch's facts, phrased for a line
+    that already names the remote (so no `with origin/main` echo), plus the
+    auto_pull outcome when one happened.
+
+    pulled: None -- no fast-forward was attempted this run;
+            (n, True, "")      -- was n behind, fast-forwarded just now;
+            (n, False, reason) -- n behind but the fast-forward was refused
+                                  (divergence, dirty file); reason verbatim.
+    """
+    if (raw or "").startswith("## HEAD"):
+        # Before the regex: `## HEAD (no branch)` parses as a branch named
+        # HEAD with no upstream, which is a lie with better grammar.
+        return "detached HEAD (not on a branch)"
+    m = _BRANCH_RE.match(raw or "")
+    if not m:
+        return raw or "?"
+    local, remote, track = m.group("local"), m.group("remote"), m.group("track")
+    if not remote:
+        return f"{local}, no upstream configured"
+    if bool(track) and "gone" in track:
+        return f"{local}, upstream no longer exists on the remote"
+    if pulled is not None:
+        n, ok, reason = pulled
+        if ok:
+            return f"{local}, was {n} behind -- fast-forwarded"
+        return f"{local}, {n} behind -- fast-forward refused: {reason}"
+    ahead = re.search(r"ahead (\d+)", track or "")
+    behind = re.search(r"behind (\d+)", track or "")
+    if fetched is False:
+        why = f": {detail}" if detail else ""
+        bits = [b for b in (ahead and f"{ahead.group(1)} ahead",
+                            behind and f"{behind.group(1)} behind") if b]
+        stale = f" ({' / '.join(bits)} as last fetched)" if bits \
+            else " (as last fetched)"
+        return f"{local}, pull status unknown -- fetch failed{why}{stale}"
+    if ahead and behind:
+        return (f"{local}, {ahead.group(1)} ahead / {behind.group(1)} behind "
+                f"-- diverged; resolve in the checkout (ccs git ...)")
+    if behind:
+        hint = "ccs git pull" if fetched else "ccs git fetch to confirm"
+        stale = "" if fetched else " as last fetched"
+        return f"{local}, {behind.group(1)} behind{stale} -- {hint}"
+    if ahead:
+        return f"{local}, {ahead.group(1)} ahead -- ccs git push to share"
+    return f"{local}, in sync" + ("" if fetched is True else " as last fetched"
+                                  if fetched is None else "")

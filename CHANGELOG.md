@@ -4,6 +4,16 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-24
+
+### Added
+- **`ccs git <anything>`** -- run git in the checkout, from any directory: `ccs git pull`, `ccs git push`, `ccs git log --oneline`. Exactly `git -C <checkout>` with the checkout resolved the way every verb resolves it; arguments, stdio, and the exit code pass through untouched, so pagers, prompts, and credential helpers behave as if you had cd'd there. Everything after the word `git` belongs to git -- ccs never mistakes git's flags for its own. Bare `ccs git` prints where the checkout is. The home-repo safety guards hold here too.
+- **`auto_pull`** (`~/claude/ccs-config.json`; `CCS_AUTO_PULL`; per-run `--pull` / `--no-pull`) -- `status` closes the loop it used to describe: when the fetch finds the checkout behind and fast-forwardable, status fast-forwards first and then reports the real drift in the same run, saying `was 2 behind -- fast-forwarded`. Strictly fast-forward-only: a divergent branch or a dirty file in the way is reported in git's own words, never merged, rebased, or stashed. Off by default; status-only -- `apply` and `collect` keep their existing warning.
+
+### Changed
+- **`status` shows the remote as its own labelled leg** (#22): a `remote` line with the host and pull state (`github.com/you/your-payload: main, in sync`) above `checkout`, which now carries its branch in parentheses. The remote is a place too -- the hub every other machine syncs through -- and "is there anything on the server my machines have not seen?" now has its own line instead of riding as a clause under a folder path. Hints on that line name the new verb (`ccs git pull`).
+- `collect` and `apply` help lines now lead with their direction (`live -> checkout` / `checkout -> live`), and `ccs -h` states the rule once: directions are named from the payload's side -- the checkout collects from a box; its contents apply to a box.
+
 ## [0.5.0] - 2026-08-24
 
 ### Added
@@ -218,7 +228,8 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.1...v0.4.2

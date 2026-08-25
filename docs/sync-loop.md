@@ -34,13 +34,13 @@ ccs apply
 # 5. send your changes out
 ccs collect
 
-# 6. share them
-git -C "$CCS_CHECKOUT_DIR" add -A
-git -C "$CCS_CHECKOUT_DIR" commit -m "config: ..."
-git -C "$CCS_CHECKOUT_DIR" push
+# 6. share them (ccs git == git -C <checkout>, from any directory)
+ccs git add -A
+ccs git commit -m "config: ..."
+ccs git push
 ```
 
-Steps 1 and 6 are plain git. ccs does not wrap them, because git is already good at them and hiding them would obscure where your config actually lives. What ccs does do is tell you when step 1 is due: `status` fetches the upstream before it reads the branch line (remote-tracking refs only -- nothing you own changes), so `in sync with origin/main` is a claim about the remote, `2 behind vs origin/main -- git pull` means exactly that, and if the fetch cannot run it says `pull status unknown` rather than guessing. `apply` and `collect` print the same note when the checkout is behind and carry on; `--require-current` makes them refuse instead. `--no-fetch` (or `fetch: false` in `~/claude/ccs-config.json`) skips the network and labels the line `as last fetched`.
+Steps 1 and 6 are still plain git -- `ccs git <anything>` is exactly `git -C <checkout>`, arguments and exit code untouched, so nothing about where your config lives is hidden; it only saves the cd. `status` tells you when step 1 is due: it fetches the upstream before it reads the branch state (remote-tracking refs only -- nothing you own changes), and reports it on its own `remote` line, so `main, in sync` is a claim about the remote, `main, 2 behind -- ccs git pull` means exactly that, and if the fetch cannot run it says `pull status unknown` rather than guessing. With `auto_pull: true` in `~/claude/ccs-config.json` (or `--pull` for one run), status closes the loop itself: when the checkout is behind and fast-forwardable it fast-forwards first -- strictly `--ff-only`; a divergent branch or a dirty file is reported in git's own words, never merged, rebased, or stashed -- and then reports the real drift, saying `was 2 behind -- fast-forwarded`. `apply` and `collect` print a note when the checkout is behind and carry on; `--require-current` makes them refuse instead. `--no-fetch` (or `fetch: false`) skips the network, labels the line `as last fetched`, and suppresses any pull.
 
 ## Why step 3 exists
 
