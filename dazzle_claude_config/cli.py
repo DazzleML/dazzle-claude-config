@@ -413,8 +413,9 @@ day to day, once it is installed:
 
   A public collection to try: https://github.com/DazzleML/dazzle-claude-code-config
 """)
-    p.add_argument("--version", action="version",
-                   version=f"ccs {_version.DISPLAY_VERSION}")
+    p.add_argument("-V", "--version", action="version",
+                   version=f"ccs {_version.DISPLAY_VERSION} "
+                           f"({_version.__version__})")
     _add_common(p)
     sub = p.add_subparsers(dest="verb", required=True)
 

@@ -123,11 +123,31 @@ def test_split_globals_cannot_drift_from_the_parser():
     value, flag = set(), set()
     for a in _build_parser()._actions:
         for opt in a.option_strings:
-            if opt in ("-h", "--help", "--version"):
+            if opt in ("-h", "-V", "--help", "--version"):
                 continue
             (value if a.nargs != 0 else flag).add(opt)
     assert value == set(_VALUE_GLOBALS)
     assert flag == set(_FLAG_GLOBALS)
+
+
+def test_version_shows_the_full_build_string():
+    # Two builds of one release must be distinguishable at the prompt
+    # (v0.5.3): `-V`/`--version` shows DISPLAY_VERSION plus the hook-stamped
+    # build string. Anchor by construction: the old format had no "(".
+    from dazzle_claude_config import _version
+    for flag in ("-V", "--version"):
+        with pytest.raises(SystemExit) as e:
+            _build_parser().parse_args([flag])
+        assert e.value.code == 0
+
+
+def test_version_string_carries_the_build_id(capsys):
+    from dazzle_claude_config import _version
+    with pytest.raises(SystemExit):
+        _build_parser().parse_args(["--version"])
+    out = capsys.readouterr().out
+    assert _version.__version__ in out          # the full build string
+    assert "(" in out and out.startswith("ccs ")
 
 
 # -- the git verb, end to end -------------------------------------------------

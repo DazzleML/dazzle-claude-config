@@ -4,6 +4,12 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-08-25
+
+### Changed
+- `ccs --version` (and its new shorthand `-V`) now shows the full build string alongside the release version -- `ccs ALPHA 0.5.3 (0.5.3_main_35-20260825-05904f1f)` -- so two builds of the same release are distinguishable at a glance (branch, build number, date, commit). Mirrors the sibling tools' format.
+- Project practice from here on: every commit bumps at least the patch version, so no two installable states share a number.
+
 ## [0.5.2] - 2026-08-25
 
 ### Added
@@ -245,7 +251,8 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.3...v0.5.0
