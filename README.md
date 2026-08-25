@@ -76,6 +76,8 @@ A machine whose file forked *before* the payload existed has no ancestor in the 
 
 ## Usage
 
+On a machine that is not configured yet, two verbs work before anything else does: `ccs setup box` declares the machine's identity (the name and tags that decide which entries apply here -- it never overwrites an existing declaration), and `ccs doctor` checks the whole environment read-only, pairing every finding with the command that fixes it. Seeded files -- delivered once, then yours -- get an explicit ownership story: `ccs seed keep <file>` records "keep mine" (asked again only if the payload's seed changes), and `ccs apply --reseed <file>` takes the fresh seed with your copy backed up first.
+
 `ccs status` answers "am I in sync?" across all three legs -- your live config vs the checkout, the checkout vs its remote, and any uncommitted work in the checkout:
 
 ```

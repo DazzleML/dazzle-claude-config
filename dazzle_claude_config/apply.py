@@ -16,7 +16,8 @@ from .backup import BackupSession
 from .gitops import CheckoutRepo
 from .manifest import Manifest
 from .secrets import is_denied
-from .syncmap import diff_all, entry_applies, entry_bases, only_scope, scope_diff
+from .syncmap import (diff_all, entry_applies, entry_bases, only_scope,
+                      rel_in_scope, scope_diff)
 
 
 class ApplyConflictError(RuntimeError):
@@ -125,11 +126,15 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
         if not entry_applies(entry, box_tags):
             continue
         reached, sub = only_scope(only, entry.repo)
-        if not reached or sub is not None:      # a seed is one file; no sub-path
+        if not reached:
             continue
-        result.only_matched += 1
         live_base, repo_base = entry_bases(
             entry, checkout, roots, manifest.territories)
+        # A sub-path under a FILE seed can match nothing; under a DIRECTORY
+        # seed it scopes to files inside (issue #28) -- handled below.
+        if sub is not None and not repo_base.is_dir():
+            continue
+        result.only_matched += 1
         pattern = is_denied(entry.repo, manifest.deny)
         if pattern:
             result.refused_denied.append((entry.repo, pattern))
@@ -159,6 +164,46 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
                     result.failed.append((entry.target, str(e)))
                     continue
             result.seeded.append(entry.target)
+        elif repo_base.is_dir():
+            # Directory seed (issue #28): seed every ABSENT file under it,
+            # recursively; a live file that exists is never touched -- the
+            # per-file never-overwrite rule IS the seed contract, a directory
+            # entry is just many of them. Before this branch existed the
+            # entry parsed, counted as matched, and silently applied to
+            # nothing -- a narrowing the default-closed manifest forbids.
+            for f in sorted(repo_base.rglob("*")):
+                if not f.is_file():
+                    continue
+                rel = f.relative_to(repo_base).as_posix()
+                if sub is not None and not rel_in_scope(rel, sub):
+                    continue
+                frepo = f"{entry.repo}/{rel}"
+                fpattern = is_denied(frepo, manifest.deny)
+                if fpattern:
+                    result.refused_denied.append((frepo, fpattern))
+                    continue
+                ftarget = f"{entry.target}/{rel}"
+                flive = live_base / rel
+                fwant = reseed is not None and reseed.replace(chr(92), "/") in (
+                    ftarget, frepo)
+                if fwant and flive.is_file():
+                    if not dry_run:
+                        try:
+                            session.save(flive, ftarget)
+                            shutil.copy2(f, flive)
+                        except OSError as e:
+                            result.failed.append((ftarget, str(e)))
+                            continue
+                    result.reseeded.append(ftarget)
+                elif not flive.exists():
+                    if not dry_run:
+                        try:
+                            flive.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(f, flive)
+                        except OSError as e:
+                            result.failed.append((ftarget, str(e)))
+                            continue
+                    result.seeded.append(ftarget)
 
     result.deferred = [f"{e.repo} ({e.strategy})" for e in manifest.deferred_entries()]
     if session.saved:

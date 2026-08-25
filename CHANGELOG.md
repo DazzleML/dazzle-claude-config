@@ -4,6 +4,21 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-08-25
+
+### Added
+- **`ccs setup box`** -- declare this machine's identity: the name and tags that decide which tag-gated entries apply here. Flags for scripts (`--name`, repeatable `--tag`), a prompt for humans, a report when the declaration exists -- and it NEVER overwrites one. Two real machine migrations reached `apply` before anyone noticed the declaration was missing; now the tool can create and verify it.
+- **`ccs doctor`** -- read-only environment check: interpreter and git versions, the checkout (present, a repo root, remote configured and reachable), the box declaration, user config, the manifest, and any open seed questions -- each finding with the command that fixes it. Prints and changes nothing, so it is safe on boxes with a hands-off policy. Exit 0 healthy / 1 warnings / 2 unusable.
+- **`ccs seed keep | reset | list`** -- seeded files are yours after delivery, and when yours differs from the payload's current seed that is a question, not drift: keep yours `--always`, keep `--until-changed` (asks again only when the upstream seed actually moves -- anchored to a hash of the seed you decided against, never a date), or take the fresh seed with `apply --reseed`. Decisions live in a hand-editable `~/claude/ccs-seed-decisions.json`.
+- **Directory seeding**: a `seed-if-absent` entry whose repo path is a directory now seeds every absent file under it, recursively -- an existing live file is never touched, the deny-list applies per file, `--only` scopes inside the directory, and `--reseed` names a single file within it.
+
+### Changed
+- **`status` stops overclaiming about seeded files**: the clean verdict now says "everything ccs syncs matches" and counts seeded files that are yours and not compared; a seeded file that is an UNMODIFIED older version of a seed the payload has since replaced gets an automatic pointer to `apply --reseed` (no question asked -- you never edited it); a customized one gets the yours-or-the-payload's question once, then respects your recorded answer. Comparison is line-ending-insensitive throughout -- measured on a real migration, a raw comparison matches nothing on Windows.
+
+### Fixed
+- `apply --dry-run` no longer announces seeds and reseeds as if they had happened ("the fresh seed is live") -- it now says `would seed` / `would reseed`, matching the copy path's wording. Nothing was ever written; only the sentence overclaimed.
+- A `seed-if-absent` entry pointing at a directory used to parse cleanly, count as matched, and silently deliver nothing -- the silent narrowing the default-closed manifest exists to forbid. Directory entries now seed (see Added); the silent path is gone.
+
 ## [0.5.1] - 2026-08-24
 
 ### Added
@@ -228,7 +243,8 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.4.2...v0.4.3

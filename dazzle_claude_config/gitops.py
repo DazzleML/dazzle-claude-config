@@ -6,6 +6,7 @@ the user's home directory, and it exposes NO branch-switching operations.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -174,6 +175,31 @@ class CheckoutRepo:
         """The origin URL, or None when no remote named origin exists."""
         rc, out, _ = _run(["remote", "get-url", "origin"], cwd=self.path)
         return out.strip() if rc == 0 and out.strip() else None
+
+    def seed_history(self, rel_path: str, limit: int = 100) -> list[tuple[str, str]]:
+        """[(commit, sha256 of the LF-normalized blob)] for every committed
+        version of rel_path, newest first, HEAD's version included.
+
+        LF-normalized because this exists to answer "is the LIVE copy an
+        untouched old version of this file?" -- and live files on Windows
+        are CRLF while history stores LF, so a raw-bytes comparison never
+        matches anything (measured on the first real migration candidate:
+        raw hash matched 0 of 5 versions, normalized matched exactly the
+        right one). See tests/one-offs/poc_seed_ancestry_probe.py.
+        """
+        rc, out, _ = _run(["rev-list", "-n", str(limit), "HEAD", "--", rel_path],
+                          cwd=self.path)
+        if rc != 0:
+            return []
+        pairs: list[tuple[str, str]] = []
+        for commit in out.split():
+            proc = subprocess.run(["git", "-C", str(self.path), "show",
+                                   f"{commit}:{rel_path}"], capture_output=True)
+            if proc.returncode != 0:
+                continue
+            norm = hashlib.sha256(proc.stdout.replace(b"\r\n", b"\n")).hexdigest()
+            pairs.append((commit, norm))
+        return pairs
 
     def check_ignored(self, rel_paths: list[str]) -> list[str]:
         """A8: which of these repo-relative paths does git ignore/exclude?

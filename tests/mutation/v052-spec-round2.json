@@ -1,0 +1,42 @@
+{
+ "mutations": [
+  {
+   "id": "M5",
+   "file": "dazzle_claude_config/seeddecisions.py",
+   "original": "        if not isinstance(rec, dict) or rec.get(\"decision\") != \"keep\" \\\n                or rec.get(\"mode\") not in VALID_MODES \\\n                or not isinstance(rec.get(\"seed_blob\"), str):",
+   "mutated": "        if not isinstance(rec, dict) and rec.get(\"decision\") != \"keep\" \\\n                or rec.get(\"mode\") not in VALID_MODES \\\n                or not isinstance(rec.get(\"seed_blob\"), str):",
+   "note": "or->and: records with wrong 'decision' but valid mode/seed_blob accepted."
+  },
+  {
+   "id": "M6",
+   "file": "dazzle_claude_config/seeddecisions.py",
+   "original": "    current = load(user_claude).by_target\n    current[target] = {\"decision\": \"keep\", \"mode\": mode,",
+   "mutated": "    current = {}\n    current[target] = {\"decision\": \"keep\", \"mode\": mode,",
+   "note": "keep() erases every other decision."
+  },
+  {
+   "id": "M10",
+   "file": "dazzle_claude_config/apply.py",
+   "original": "                fwant = reseed is not None and reseed.replace(chr(92), \"/\") in (\n                    ftarget, frepo)",
+   "mutated": "                fwant = reseed is not None and reseed in (\n                    ftarget, frepo)",
+   "note": "Backslash-form reseed paths never match inside directory seeds."
+  },
+  {
+   "id": "M12",
+   "file": "dazzle_claude_config/boxconfig.py",
+   "original": "    if not isinstance(name, str) or not TAG_RE.match(name):\n        errs.append(f\"name {name!r} must be lowercase [a-z0-9][a-z0-9._-]* \"",
+   "mutated": "    if not isinstance(name, str) and not TAG_RE.match(name):\n        errs.append(f\"name {name!r} must be lowercase [a-z0-9][a-z0-9._-]* \"",
+   "note": "or->and: invalid string names pass validation."
+  }
+ ],
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-x",
+  "tests/test_seed_visibility.py",
+  "tests/test_setup_doctor.py",
+  "tests/test_dir_seed.py"
+ ]
+}

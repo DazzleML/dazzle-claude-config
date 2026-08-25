@@ -116,6 +116,217 @@ def _run_git_verb(seen: dict, git_args: list[str]) -> int:
     return subprocess.call(["git", "-C", str(checkout), *git_args])
 
 
+def _seed_verb(args, manifest, checkout, roots, repo) -> int:
+    """`ccs seed keep|reset|list` -- record, revoke, or show the per-box
+    answer to "yours or the payload's?" for seeded files (issue #27)."""
+    from . import seeddecisions
+    from .syncmap import entry_bases
+    user_claude = roots.get("USER_CLAUDE")
+    if args.action == "list":
+        findings, errors = _seed_findings(
+            manifest, checkout, roots, repo, args._box_tags, user_claude)
+        _print_seed_block(findings, errors, long_form=True)
+        if not findings:
+            print(c("dim", "no file seed entries apply to this box"))
+        return EXIT_CLEAN
+    target = args.target
+    if not target:
+        print(c("bold_red", "error") + f": seed {args.action} needs a target "
+              "(the entry's target or repo path, e.g. CLAUDE.md)",
+              file=sys.stderr)
+        return EXIT_ERROR
+    norm_t = target.replace(chr(92), "/")
+    entry = next((e for e in manifest.seed_entries()
+                  if norm_t in (e.target, e.repo)), None)
+    if entry is None:
+        print(c("bold_red", "error") + f": {target!r} is not a seed entry "
+              "(ccs seed list shows them)", file=sys.stderr)
+        return EXIT_ERROR
+    if args.action == "reset":
+        if seeddecisions.reset(entry.target, user_claude):
+            print(f"forgot the decision for {c('cyan', entry.target)} -- "
+                  "status will ask again if it differs from the seed")
+        else:
+            print(c("dim", f"no decision recorded for {entry.target}"))
+        return EXIT_CLEAN
+    # keep
+    _live, repo_base = entry_bases(entry, checkout, roots, manifest.territories)
+    if not repo_base.is_file():
+        print(c("bold_red", "error") + f": the seed for {entry.target} is not "
+              "a file in the checkout", file=sys.stderr)
+        return EXIT_ERROR
+    mode = "always" if args.always else "until-changed"
+    blob = _norm_sha(repo_base.read_bytes())
+    path = seeddecisions.keep(entry.target, mode, blob, user_claude)
+    tail = ("for good -- status stays quiet about it" if mode == "always" else
+            "until the payload's seed changes -- then status asks again")
+    print(f"kept: {c('cyan', entry.target)} is yours {tail}")
+    print(c("dim", f"recorded in {path} (hand-editable; ccs seed reset revokes)"))
+    return EXIT_CLEAN
+
+
+def _setup_box(args) -> int:
+    """`ccs setup box` -- declare this box's identity (name + tags), the
+    file the tags gate and the probe read. Never overwrites (#26 slice 1)."""
+    user_claude = Path(args.user_claude).expanduser() if args.user_claude \
+        else None
+    existing = boxconfig.box_path(user_claude)
+    if existing.exists():
+        box = boxconfig.load(user_claude)
+        for err in box.errors:
+            print(c("yellow", f"warning: {err}"))
+        tags = ", ".join(sorted(box.tags)) or "none"
+        print(f"{c('bold', 'declared')}  {c('cyan', str(existing))}")
+        print(f"          name {c('cyan', box.name or '(unset)')}, "
+              f"tags {c('cyan', tags)}")
+        print(c("dim", "already declared -- edit the file to change it; "
+                       "this command never overwrites"))
+        return EXIT_CLEAN
+    name = args.name
+    if not name and sys.stdin.isatty():
+        try:
+            name = input("box name (lowercase, a declared name -- "
+                         "not a hostname): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return EXIT_ERROR
+    if not name:
+        print(c("bold_red", "error") + ": pass --name (non-interactive run)",
+              file=sys.stderr)
+        return EXIT_ERROR
+    tags = list(args.tag or [])
+    if name not in tags:
+        tags.insert(0, name)
+    path, errs = boxconfig.write_box(name, tags, user_claude)
+    if errs:
+        for e in errs:
+            print(c("bold_red", "error") + f": {e}", file=sys.stderr)
+        return EXIT_ERROR
+    print(f"declared: box {c('cyan', name)}, tags "
+          f"{c('cyan', ', '.join(tags))} -> {path}")
+    print(c("dim", "tag-gated entries now apply and collect only where "
+                   "every tag is declared; run ccs status --long to see "
+                   "what this box is (and is not) offered"))
+    return EXIT_CLEAN
+
+
+def _doctor(args) -> int:
+    """`ccs doctor` -- read-only environment verification (#26 slice 2).
+
+    Safe on a read-only-policy box: prints findings and fixes, does
+    nothing. Exit 0 all OK, 1 warnings, 2 failures (the status pattern).
+    """
+    findings: list[tuple[str, str]] = []   # (level, line)
+
+    def ok(line):
+        findings.append(("OK", line))
+
+    def warn(line):
+        findings.append(("WARN", line))
+
+    def fail(line):
+        findings.append(("FAIL", line))
+
+    # interpreter + git
+    v = sys.version_info
+    (ok if v >= (3, 10) else fail)(f"python {v.major}.{v.minor}.{v.micro}"
+                                   + ("" if v >= (3, 10) else " -- 3.10+ required"))
+    import shutil as _sh
+    (ok if _sh.which("git") else fail)("git on PATH"
+                                       if _sh.which("git") else
+                                       "git not found on PATH -- install git")
+    # checkout
+    co = Path(args.checkout_dir).expanduser().resolve() if args.checkout_dir \
+        else default_checkout_dir()
+    repo = None
+    if not co.is_dir():
+        fail(f"checkout not found: {co} -- git clone your payload there, "
+             "set CCS_CHECKOUT_DIR, or pass --checkout-dir")
+    else:
+        try:
+            repo = CheckoutRepo(co)
+            ok(f"checkout {co}")
+        except (GitError, GitopsSafetyError) as e:
+            fail(f"checkout: {e}")
+    user_claude = Path(args.user_claude).expanduser() if args.user_claude \
+        else None
+    cfg = userconfig.load(user_claude)
+    if repo is not None:
+        url = repo.remote_url()
+        (ok if url else warn)(f"remote {render.remote_host(url)}" if url else
+                              "no remote named origin -- pushes and pulls "
+                              "have nowhere to go")
+        if url and cfg.get("fetch", True) and not getattr(args, "no_fetch", False):
+            fetched, why = repo.fetch(timeout=int(cfg.get("fetch_timeout", 15)))
+            if fetched is True:
+                ok("remote reachable (fetched)")
+            elif fetched is None:
+                warn("no upstream tracking branch -- git push -u origin <branch>")
+            else:
+                warn(f"fetch failed: {why} -- offline, or credentials needed")
+    # box identity
+    bp = boxconfig.box_path(user_claude)
+    if not bp.exists():
+        warn(f"no box file at {bp} -- tag-gated entries will not apply; "
+             "ccs setup box creates it")
+    else:
+        box = boxconfig.load(user_claude)
+        for e in box.errors:
+            warn(f"box file: {e}")
+        if not box.errors:
+            tags = ", ".join(sorted(box.tags)) or "none"
+            ok(f"box {box.name or '(unnamed)'} (tags: {tags})")
+    # user config
+    cfg_path = userconfig.config_path(user_claude)
+    if cfg_path.exists():
+        try:
+            import json as _json
+            _json.loads(cfg_path.read_text(encoding="utf-8-sig"))
+            ok(f"user config {cfg_path.name}")
+        except ValueError as e:
+            warn(f"{cfg_path.name}: not valid JSON ({e}) -- defaults in effect")
+    # manifest + seeds
+    manifest = None
+    if co.is_dir():
+        try:
+            manifest = Manifest.load(co)
+            ok(f"manifest: {len(manifest.entries)} entries")
+        except ManifestError as e:
+            if "manifest not found" in str(e):
+                manifest = Manifest.implicit(co)
+                warn(f"no ccs-manifest.json -- implicit ~/.claude layout "
+                     f"({len(manifest.entries)} surfaces)")
+            else:
+                fail(f"manifest: {e}")
+    if manifest is not None:
+        roots = territory_roots(args.claude_dir, args.user_claude)
+        box = boxconfig.load(user_claude)
+        sf, serr = _seed_findings(manifest, co, roots, repo, box.tags,
+                                  roots.get("USER_CLAUDE"))
+        for e in serr:
+            warn(e)
+        for t, s, _x in sf:
+            if s in _SEED_ACTIONABLE:
+                _tone, msg = _SEED_ACTIONABLE[s]
+                warn(f"seeded {t}: " + msg.format(t=t))
+        probe = co / "scripts" / "probe_layers.py"
+        if probe.is_file():
+            findings.append(("info", f"payload ships a session verifier -- "
+                                     f"python {probe}"))
+    tones = {"OK": "green", "WARN": "yellow", "FAIL": "bold_red",
+             "info": "dim"}
+    for level, line in findings:
+        print(f"[{c(tones[level], level.center(4))}] {line}")
+    fails = any(l == "FAIL" for l, _ in findings)
+    warns = any(l == "WARN" for l, _ in findings)
+    verdict = ("this environment is not usable yet" if fails else
+               "usable, with things worth fixing" if warns else
+               "this box is fully configured")
+    print(c("bold_red" if fails else "yellow" if warns else "bold_green",
+            f"doctor: {verdict}"))
+    return EXIT_ERROR if fails else EXIT_DRIFT if warns else EXIT_CLEAN
+
+
 _MERGE_HELP = dict(
     formatter_class=argparse.RawDescriptionHelpFormatter,
     description="Resolve files that differ on BOTH sides in your own diff tool, "
@@ -339,6 +550,37 @@ day to day, once it is installed:
                              "after `git` goes to git verbatim (ccs git pull, "
                              "ccs git push, ccs git log ...)")
     gp.add_argument("gitargs", nargs=argparse.REMAINDER)
+
+    sd = sub.add_parser("seed", help="seeded files are yours after delivery; "
+                        "record the answer to \"yours or the payload's?\" "
+                        "(keep | reset | list)")
+    _add_common(sd, suppress=True)
+    sd.add_argument("action", choices=("keep", "reset", "list"))
+    sd.add_argument("target", nargs="?", default=None,
+                    help="the seed entry's target or repo path (e.g. CLAUDE.md)")
+    sg = sd.add_mutually_exclusive_group()
+    sg.add_argument("--always", action="store_true",
+                    help="keep yours for good -- status stays quiet about it")
+    sg.add_argument("--until-changed", action="store_true",
+                    help="keep yours until the payload's seed changes, then "
+                         "status asks again (the default)")
+
+    st = sub.add_parser("setup", help="configure this machine -- `setup box` "
+                        "declares its name and tags (the file the tags gate "
+                        "reads; never overwrites)")
+    _add_common(st, suppress=True)
+    st.add_argument("what", choices=("box",))
+    st.add_argument("--name", default=None,
+                    help="the box's declared name (lowercase; a chosen name, "
+                         "not a hostname)")
+    st.add_argument("--tag", action="append", default=None, metavar="TAG",
+                    help="declare a tag (repeatable); the name itself is "
+                         "always included")
+
+    dr = sub.add_parser("doctor", help="read-only environment check: "
+                        "interpreter, git, checkout, remote, box identity, "
+                        "config, manifest, seeds. Changes nothing")
+    _add_common(dr, suppress=True)
     return p
 
 
@@ -852,6 +1094,111 @@ def _warn_only_miss(args, manifest, box) -> None:
         print(c("yellow", f"warning: --only {args.only!r} matched no manifest entries"))
 
 
+def _norm_sha(data: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def _seed_findings(manifest, checkout, roots, repo, box_tags, user_claude):
+    """Per FILE seed entry, what `status` should say about it (issue #27).
+
+    States: absent (will seed) | matches | untouched-old (the payload
+    replaced a seed this box never edited -- auto-offer --reseed, no
+    question) | open (customized, no decision recorded) | kept-always |
+    kept-current (until-changed, seed unchanged) | reopened (until-changed,
+    the seed moved since the decision).
+
+    EOL-insensitive throughout: history stores LF, live Windows files are
+    CRLF; a raw comparison never matches anything (measured -- see
+    tests/one-offs/poc_seed_ancestry_probe.py).
+    """
+    from . import seeddecisions
+    from .syncmap import entry_applies, entry_bases
+    dec = seeddecisions.load(user_claude)
+    findings: list[tuple[str, str, str]] = []
+    # A seed entry can be the FALLBACK for a target a tag-gated copy entry
+    # also delivers (machine.template.md seeds boxes that machines/<name>/
+    # does not cover). Where the copy entry applies, the copy governs --
+    # asking "yours or the payload's?" about that file here would be wrong.
+    covered = {(e.territory, e.target) for e in manifest.entries
+               if e.strategy == "copy" and entry_applies(e, box_tags)}
+    for entry in manifest.seed_entries():
+        if not entry_applies(entry, box_tags):
+            continue
+        if (entry.territory, entry.target) in covered:
+            continue
+        live_base, repo_base = entry_bases(
+            entry, checkout, roots, manifest.territories)
+        if not repo_base.is_file():
+            continue    # directory seeds: per-file reporting is #28 follow-up
+        if not live_base.is_file():
+            findings.append((entry.target, "absent", ""))
+            continue
+        try:
+            live, seed = live_base.read_bytes(), repo_base.read_bytes()
+        except OSError:
+            continue
+        current_sha = _norm_sha(seed)
+        live_sha = _norm_sha(live)
+        if live_sha == current_sha:
+            findings.append((entry.target, "matches", ""))
+            continue
+        hist = repo.seed_history(entry.repo) if repo is not None else []
+        if live_sha in {sha for _c, sha in hist} - {current_sha}:
+            findings.append((entry.target, "untouched-old", ""))
+            continue
+        rec = dec.by_target.get(entry.target)
+        if rec is None:
+            findings.append((entry.target, "open", current_sha))
+        elif rec.get("mode") == "always":
+            findings.append((entry.target, "kept-always", ""))
+        elif rec.get("seed_blob") == current_sha:
+            findings.append((entry.target, "kept-current", ""))
+        else:
+            findings.append((entry.target, "reopened", current_sha))
+    return findings, dec.errors
+
+
+_SEED_ACTIONABLE = {
+    "untouched-old": ("yellow", "an older seed, unmodified -- the payload "
+                                "replaced it; ccs apply --reseed {t} takes the "
+                                "new one (your copy is backed up)"),
+    "open": ("yellow", "differs from the current seed -- yours or the "
+                       "payload's? ccs seed keep {t} [--always|--until-changed] "
+                       "to keep yours, or ccs apply --reseed {t}"),
+    "reopened": ("yellow", "the seed changed since you chose to keep yours -- "
+                           "ccs seed keep {t} again, ccs apply --reseed {t}, "
+                           "or ccs seed reset {t}"),
+}
+_SEED_QUIET = {
+    "matches": "matches the seed",
+    "kept-always": "yours (kept, always)",
+    "kept-current": "yours (kept until the seed changes)",
+    "absent": "will seed on the next ccs apply",
+}
+
+
+def _print_seed_block(findings, errors, long_form: bool) -> None:
+    """The `seeded` status block: actionable states always; the quiet
+    inventory only in the long form (explanation, not drift -- exit codes
+    are untouched, the ownership contract stands)."""
+    for e in errors:
+        print(c("yellow", f"warning: {e}"))
+    actionable = [(t, s) for t, s, _ in findings if s in _SEED_ACTIONABLE]
+    quiet = [(t, s) for t, s, _ in findings if s in _SEED_QUIET]
+    if not actionable and not (long_form and quiet):
+        return
+    print(f"{c('bold', 'seeded')}    " +
+          c("dim", "(yours after delivery -- ccs never overwrites these; "
+                   "not counted as drift)"))
+    for t, s in actionable:
+        tone, msg = _SEED_ACTIONABLE[s]
+        print(f"          {c(tone, t)} {c(tone, '-- ' + msg.format(t=t))}")
+    if long_form:
+        for t, s in quiet:
+            print(f"          {c('dim', t)} {c('dim', '-- ' + _SEED_QUIET[s])}")
+
+
 def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None,
                   remote=(render.UNSPECIFIED, "", None),
                   manifest=None, box=None, pulled=None) -> None:
@@ -930,6 +1277,14 @@ def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None,
     cfg = cfg or {}
     detail = cfg.get("status_detail", "auto")
     budget = cfg.get("status_max_lines", 30)
+    seed_findings, seed_errors = ([], [])
+    if manifest is not None:
+        seed_findings, seed_errors = _seed_findings(
+            manifest, checkout, roots, repo,
+            box.tags if box is not None else frozenset(),
+            roots.get("USER_CLAUDE"))
+        _print_seed_block(seed_findings, seed_errors,
+                          long_form=(detail == "long"))
     # One line per entry, plus one per file it contains.
     would_cost = sum(1 + len(d.live_only) + len(d.repo_only) + len(d.modified)
                      for d in diffs)
@@ -1008,9 +1363,20 @@ def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None,
               f" -- but the checkout is {behind} behind {up}; "
               + c("bold", "git pull") + " then run status again")
     elif not diffs:
+        # "Everything ccs SYNCS matches" is the honest claim (issue #27):
+        # seeded files are the box's own and are not compared, and saying
+        # "your live config and the checkout match" while a seeded file
+        # differs by a thousand lines was measured to mislead exactly the
+        # person mid-migration.
+        n_own = sum(1 for _t, s, _x in seed_findings
+                    if s not in ("matches", "absent"))
+        clause = ""
+        if n_own:
+            files = "file is" if n_own == 1 else "files are"
+            clause = c("dim", f" ({n_own} seeded {files} yours and not compared)")
         print(c("bold_green", "status: clean") +
-              " -- your live config and the checkout match; "
-              "nothing to collect, nothing to apply")
+              " -- everything ccs syncs matches; "
+              "nothing to collect, nothing to apply" + clause)
     else:
         # Both-sides drift needs `merge`. Recommending collect/apply here is
         # not merely incomplete -- they are ONE-WAY overwrites, so following
@@ -1072,6 +1438,13 @@ def main(argv: list[str] | None = None) -> int:
             seen["--no-color"] = True
         return _run_git_verb(seen, list(args.gitargs or []))
     render.init(getattr(args, "no_color", False))
+    # setup and doctor run BEFORE _setup(): their whole purpose is working
+    # on an environment that is not configured yet, which is exactly the
+    # state _setup() refuses.
+    if args.verb == "setup":
+        return _setup_box(args)
+    if args.verb == "doctor":
+        return _doctor(args)
     try:
         manifest, checkout, roots, repo = _setup(args)
 
@@ -1088,6 +1461,9 @@ def main(argv: list[str] | None = None) -> int:
         box = boxconfig.load(roots.get('USER_CLAUDE'))
         for err in box.errors:
             print(c('yellow', f'warning: box config: {err}'))
+        if args.verb == "seed":
+            args._box_tags = box.tags
+            return _seed_verb(args, manifest, checkout, roots, repo)
         fetched, fetch_detail, behind = (render.UNSPECIFIED, "", None)
         pulled: tuple[int, bool, str] | None = None
         if args.verb in ("status", "collect", "apply"):
@@ -1258,11 +1634,20 @@ def main(argv: list[str] | None = None) -> int:
             for rel in r.copied:
                 verb = "would apply" if args.dry_run else "applied"
                 print(f"{c('green', verb)}: {rel}")
+            # Same dry-run honesty as r.copied above: a message that claims
+            # completion while nothing was written is exactly the
+            # overclaiming this release removes elsewhere (tester finding,
+            # v0.5.2 checklist run-01).
             for rel in r.reseeded:
-                print(f"{c('cyan', 'reseeded')} {rel} "
-                      f"{c('dim', '-- previous copy backed up; the fresh seed is live')}")
+                if args.dry_run:
+                    print(f"{c('cyan', 'would reseed')} {rel} "
+                          f"{c('dim', '-- old copy to the backup dir first')}")
+                else:
+                    print(f"{c('cyan', 'reseeded')} {rel} "
+                          f"{c('dim', '-- previous copy backed up; the fresh seed is live')}")
             for rel in r.seeded:
-                print(f"{c('green', 'seeded')} {rel} {c('dim', '-- was absent locally')}")
+                verb = "would seed" if args.dry_run else "seeded"
+                print(f"{c('green', verb)} {rel} {c('dim', '-- was absent locally')}")
             for rel in r.removals_staged:
                 print(f"{c('yellow', 'removal staged to backup')}: {rel}")
             for rel in r.local_only:

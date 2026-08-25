@@ -1,0 +1,125 @@
+{
+  "harness": {
+    "name": "mutation_sweep.py",
+    "version": "0.1.0"
+  },
+  "environment": {
+    "python": "3.12.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "root": ".",
+    "test_command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-x",
+      "tests/test_seed_visibility.py",
+      "tests/test_setup_doctor.py",
+      "tests/test_dir_seed.py"
+    ],
+    "timestamp": "2026-08-25T11:48:08-04:00"
+  },
+  "results": [
+    {
+      "id": "M1",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Drops CRLF normalization; seed comparison becomes line-ending sensitive.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M2",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "covered over-includes, silently suppressing seed findings.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M3",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Wrong tuple element: compares against commit ids; untouched-old never detected.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M4",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Comparison flip swaps kept-current and reopened.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M5",
+      "file": "dazzle_claude_config/seeddecisions.py",
+      "note": "or->and: records with wrong 'decision' but valid mode/seed_blob accepted.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M6",
+      "file": "dazzle_claude_config/seeddecisions.py",
+      "note": "keep() erases every other decision.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M7",
+      "file": "dazzle_claude_config/seeddecisions.py",
+      "note": "reset() rewrites unchanged and returns True.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M8",
+      "file": "dazzle_claude_config/apply.py",
+      "note": "Reseed overwrites without the session backup.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M9",
+      "file": "dazzle_claude_config/apply.py",
+      "note": "Guard flip: clobbers existing, never creates missing.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M10",
+      "file": "dazzle_claude_config/apply.py",
+      "note": "Backslash-form reseed paths never match inside directory seeds.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M11",
+      "file": "dazzle_claude_config/boxconfig.py",
+      "note": "Validation errors ignored; invalid box.json written as success.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M12",
+      "file": "dazzle_claude_config/boxconfig.py",
+      "note": "or->and: invalid string names pass validation.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    }
+  ],
+  "summary": {
+    "killed": 8,
+    "survived": 4
+  },
+  "anomalies": []
+}

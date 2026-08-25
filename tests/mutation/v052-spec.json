@@ -1,0 +1,98 @@
+{
+ "mutations": [
+  {
+   "id": "M1",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "def _norm_sha(data: bytes) -> str:\n    import hashlib\n    return hashlib.sha256(data.replace(b\"\\r\\n\", b\"\\n\")).hexdigest()",
+   "mutated": "def _norm_sha(data: bytes) -> str:\n    import hashlib\n    return hashlib.sha256(data).hexdigest()",
+   "note": "Drops CRLF normalization; seed comparison becomes line-ending sensitive."
+  },
+  {
+   "id": "M2",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "    covered = {(e.territory, e.target) for e in manifest.entries\n               if e.strategy == \"copy\" and entry_applies(e, box_tags)}",
+   "mutated": "    covered = {(e.territory, e.target) for e in manifest.entries\n               if e.strategy == \"copy\" or entry_applies(e, box_tags)}",
+   "note": "covered over-includes, silently suppressing seed findings."
+  },
+  {
+   "id": "M3",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "        hist = repo.seed_history(entry.repo) if repo is not None else []\n        if live_sha in {sha for _c, sha in hist} - {current_sha}:",
+   "mutated": "        hist = repo.seed_history(entry.repo) if repo is not None else []\n        if live_sha in {_c for _c, sha in hist} - {current_sha}:",
+   "note": "Wrong tuple element: compares against commit ids; untouched-old never detected."
+  },
+  {
+   "id": "M4",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "        elif rec.get(\"seed_blob\") == current_sha:\n            findings.append((entry.target, \"kept-current\", \"\"))",
+   "mutated": "        elif rec.get(\"seed_blob\") != current_sha:\n            findings.append((entry.target, \"kept-current\", \"\"))",
+   "note": "Comparison flip swaps kept-current and reopened."
+  },
+  {
+   "id": "M5",
+   "file": "dazzle_claude_config/seeddecisions.py",
+   "original": "        if not isinstance(rec, dict) or rec.get(\"decision\") != \"keep\" \\\n                or rec.get(\"mode\") not in VALID_MODES \\\n                or not isinstance(rec.get(\"seed_blob\"), str):",
+   "mutated": "        if not isinstance(rec, dict) and rec.get(\"decision\") != \"keep\" \\\n                or rec.get(\"mode\") not in VALID_MODES \\\n                or not isinstance(rec.get(\"seed_blob\"), str):",
+   "note": "or->and: records with wrong 'decision' but valid mode/seed_blob accepted."
+  },
+  {
+   "id": "M6",
+   "file": "dazzle_claude_config/seeddecisions.py",
+   "original": "    current = load(user_claude).by_target\n    current[target] = {\"decision\": \"keep\", \"mode\": mode,",
+   "mutated": "    current = {}\n    current[target] = {\"decision\": \"keep\", \"mode\": mode,",
+   "note": "keep() erases every other decision."
+  },
+  {
+   "id": "M7",
+   "file": "dazzle_claude_config/seeddecisions.py",
+   "original": "    del current[target]\n    _write(path, current)\n    return True",
+   "mutated": "    _write(path, current)\n    return True",
+   "note": "reset() rewrites unchanged and returns True."
+  },
+  {
+   "id": "M8",
+   "file": "dazzle_claude_config/apply.py",
+   "original": "                if fwant and flive.is_file():\n                    if not dry_run:\n                        try:\n                            session.save(flive, ftarget)\n                            shutil.copy2(f, flive)",
+   "mutated": "                if fwant and flive.is_file():\n                    if not dry_run:\n                        try:\n                            shutil.copy2(f, flive)",
+   "note": "Reseed overwrites without the session backup."
+  },
+  {
+   "id": "M9",
+   "file": "dazzle_claude_config/apply.py",
+   "original": "                elif not flive.exists():\n                    if not dry_run:\n                        try:\n                            flive.parent.mkdir(parents=True, exist_ok=True)",
+   "mutated": "                elif flive.exists():\n                    if not dry_run:\n                        try:\n                            flive.parent.mkdir(parents=True, exist_ok=True)",
+   "note": "Guard flip: clobbers existing, never creates missing."
+  },
+  {
+   "id": "M10",
+   "file": "dazzle_claude_config/apply.py",
+   "original": "                fwant = reseed is not None and reseed.replace(chr(92), \"/\") in (\n                    ftarget, frepo)",
+   "mutated": "                fwant = reseed is not None and reseed in (\n                    ftarget, frepo)",
+   "note": "Backslash-form reseed paths never match inside directory seeds."
+  },
+  {
+   "id": "M11",
+   "file": "dazzle_claude_config/boxconfig.py",
+   "original": "    if errs:\n        return None, errs\n    path.parent.mkdir(parents=True, exist_ok=True)",
+   "mutated": "    path.parent.mkdir(parents=True, exist_ok=True)",
+   "note": "Validation errors ignored; invalid box.json written as success."
+  },
+  {
+   "id": "M12",
+   "file": "dazzle_claude_config/boxconfig.py",
+   "original": "    if not isinstance(name, str) or not TAG_RE.match(name):\n        errs.append(f\"name {name!r} must be lowercase [a-z0-9][a-z0-9._-]* \"",
+   "mutated": "    if not isinstance(name, str) and not TAG_RE.match(name):\n        errs.append(f\"name {name!r} must be lowercase [a-z0-9][a-z0-9._-]* \"",
+   "note": "or->and: invalid string names pass validation."
+  }
+ ],
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-x",
+  "tests/test_seed_visibility.py",
+  "tests/test_setup_doctor.py",
+  "tests/test_dir_seed.py"
+ ]
+}

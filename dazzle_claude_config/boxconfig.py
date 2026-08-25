@@ -103,6 +103,32 @@ def load(user_claude: Path | None = None) -> Box:
     return box
 
 
+def write_box(name: str, tags: list[str],
+              user_claude: Path | None = None) -> tuple[Path | None, list[str]]:
+    """Write a validated declaration. NEVER overwrites -- a box's identity
+    is a deliberate statement; changing it is an edit, not a re-run.
+
+    Returns (path, errors): (path, []) on success; (None, errors) when the
+    file already exists or the name/tags fail validation.
+    """
+    path = box_path(user_claude)
+    if path.exists():
+        return None, [f"{path} already exists -- edit it to change the "
+                      "declaration (this command never overwrites)"]
+    errs: list[str] = []
+    if not isinstance(name, str) or not TAG_RE.match(name):
+        errs.append(f"name {name!r} must be lowercase [a-z0-9][a-z0-9._-]* "
+                    "(a declared name, not a hostname)")
+    clean, tag_errs = validate_tags(list(tags), "tags")
+    errs.extend(tag_errs)
+    if errs:
+        return None, errs
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"name": name, "tags": clean}, indent=1) + "\n",
+                    encoding="utf-8")
+    return path, []
+
+
 def write_template(user_claude: Path | None = None, name: str | None = None) -> Path:
     """Write a starter declaration. Never overwrites an existing file."""
     path = box_path(user_claude)
