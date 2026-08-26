@@ -1,0 +1,48 @@
+{
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-x",
+  "tests/test_uncommitted_checkout_guard.py",
+  "tests/test_untracked_attribution.py"
+ ],
+ "mutations": [
+  {
+   "id": "H1",
+   "file": "dazzle_claude_config/gitops.py",
+   "original": "                out.add(old_p.strip().strip('\"'))\n                out.add(new_p.strip().strip('\"'))",
+   "mutated": "                out.add(new_p.strip().strip('\"'))",
+   "note": "Only the NEW side of a rename is guarded -- the original defect, restored."
+  },
+  {
+   "id": "H2",
+   "file": "dazzle_claude_config/gitops.py",
+   "original": "                out.add(old_p.strip().strip('\"'))\n                out.add(new_p.strip().strip('\"'))",
+   "mutated": "                out.add(old_p.strip().strip('\"'))",
+   "note": "Only the OLD side is guarded -- the mirror defect; the renamed file loses protection."
+  },
+  {
+   "id": "H3",
+   "file": "dazzle_claude_config/gitops.py",
+   "original": "                old_p, new_p = path.split(\" -> \", 1)",
+   "mutated": "                new_p, old_p = path.split(\" -> \", 1)",
+   "note": "old/new swapped. Both still land in the set, so this should be EQUIVALENT."
+  },
+  {
+   "id": "H4",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "                held = bool(wrong_dir or r.removals_pending\n                            or r.mismatched or r.failed)",
+   "mutated": "                held = bool(wrong_dir or r.removals_pending\n                            or r.mismatched)",
+   "note": "r.failed dropped from held -- the original defect, restored."
+  },
+  {
+   "id": "H5",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "                held = bool(wrong_dir or r.removals_pending\n                            or r.mismatched or r.failed)",
+   "mutated": "                held = bool(wrong_dir and r.removals_pending\n                            and r.mismatched and r.failed)",
+   "note": "or -> and: held only when EVERY category fired at once."
+  }
+ ]
+}

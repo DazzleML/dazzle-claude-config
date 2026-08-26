@@ -1,0 +1,19 @@
+{
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-x",
+  "tests/test_uncommitted_checkout_guard.py"
+ ],
+ "mutations": [
+  {
+   "id": "G4",
+   "file": "dazzle_claude_config/gitops.py",
+   "original": "            if \" -> \" in path:          # a rename reports \"old -> new\"\n                path = path.split(\" -> \", 1)[1]",
+   "mutated": "            if \" -> \" in path:          # a rename reports \"old -> new\"\n                path = path.split(\" -> \", 1)[0]",
+   "note": "A rename reports the OLD path as dirty instead of the new one."
+  }
+ ]
+}

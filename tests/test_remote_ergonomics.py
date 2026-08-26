@@ -207,7 +207,7 @@ def test_auto_pull_fast_forwards_and_reports(fleet, capsys):
     _enable_auto_pull(fleet)
     main(_ccs(fleet, "status"))
     out = capsys.readouterr().out
-    assert "was 1 behind -- fast-forwarded" in out, out
+    assert "your checkout was 1 behind -- fast-forwarded" in out, out
     assert _head(fleet["co"]) == _head(fleet["other"])
 
 
@@ -236,7 +236,7 @@ def test_no_pull_flag_beats_the_config(fleet, capsys):
     before = _head(fleet["co"])
     main(_ccs(fleet, "status", "--no-pull"))
     out = capsys.readouterr().out
-    assert "1 behind -- ccs status --pull" in out
+    assert "your checkout is 1 behind -- ccs status --pull" in out
     assert _head(fleet["co"]) == before          # untouched
 
 
@@ -317,14 +317,14 @@ def test_humanize_remote_states():
     assert humanize_remote("## main...origin/main", fetched=None) == \
         "main, in sync as last fetched"
     assert humanize_remote("## main...origin/main [behind 2]", fetched=True) == \
-        "main, 2 behind -- ccs status --pull"
+        "main, your checkout is 2 behind -- ccs status --pull"
     assert humanize_remote("## main...origin/main [ahead 1]", fetched=True) == \
-        "main, 1 ahead -- ccs git push to share"
+        "main, your checkout is 1 ahead -- ccs git push to share"
     assert "diverged" in humanize_remote(
         "## main...origin/main [ahead 1, behind 2]", fetched=True)
     assert humanize_remote("## main...origin/main [behind 2]", fetched=True,
                            pulled=(2, True, "")) == \
-        "main, was 2 behind -- fast-forwarded"
+        "main, your checkout was 2 behind -- fast-forwarded"
     assert "fast-forward refused" in humanize_remote(
         "## main...origin/main [behind 2]", fetched=True,
         pulled=(2, False, "dirty"))

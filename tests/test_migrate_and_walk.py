@@ -365,3 +365,27 @@ def test_walk_quit_counts_the_current_file_as_remaining(world, capsys, monkeypat
     _answers(monkeypatch, "q")
     main(_ccs(world, "seed"))
     assert "0 decided, 2 left" in capsys.readouterr().out
+
+
+def test_no_user_facing_string_still_says_the_pre_rename_verb():
+    """The v0.5.7 rename must not leave `ccs migrate` anywhere it can be read.
+
+    It did: `ccs seed migrate` with no target printed a hint telling the user
+    to run `ccs migrate <file>` -- a command that no longer parses. A single
+    assertion on that one line would not have caught it, and would not catch
+    the next rename either, so this scans the whole package for the stale
+    spelling. `ccs seed migrate` is the only legal form; bare `ccs migrate `
+    is the misspelling, which is why the check looks for the verb NOT
+    preceded by `seed`.
+    """
+    import re
+    from pathlib import Path
+
+    pkg = Path(__file__).resolve().parent.parent / "dazzle_claude_config"
+    stale = re.compile(r"(?<!seed )ccs migrate\b")
+    offenders = []
+    for py in sorted(pkg.glob("*.py")):
+        for n, line in enumerate(py.read_text(encoding="utf-8").splitlines(), 1):
+            if stale.search(line):
+                offenders.append(f"{py.name}:{n}: {line.strip()}")
+    assert not offenders, "stale pre-rename verb still reachable:\n" + "\n".join(offenders)

@@ -47,3 +47,20 @@ git hash-object (first 12). Only separated-generation runs (modes 1-2) write her
   the whole entry (`(True, None)`) and an empty-string sub-prefix can never
   reach `rel_in_scope`. Pinned by the trailing-slash case in
   `test_only_scope`. (2026-08-22, mode 1.)
+
+## dazzle_claude_config/gitops.py @ 25ced351a047
+
+- G3 (v0.5.8 sweep): `dirty_paths` parses the porcelain line with `line[3:]`;
+  the mutant uses `line[2:]`. **equivalent** -- both slices are followed by
+  `.strip()`, and porcelain's format is two status columns, one space, then the
+  path, so `line[2:].strip()` and `line[3:].strip()` return the identical
+  string for every status code including `??`. No input can separate them.
+  (2026-08-26, diff-scoped sweep.)
+
+## dazzle_claude_config/gitops.py @ e58d26e552bb
+
+- H3 (v0.5.9 sweep): the rename unpack `old_p, new_p = path.split(" -> ", 1)`
+  with the two names swapped. **equivalent** -- both names are added to the
+  same set on the next two lines and nothing downstream distinguishes them,
+  so no input can separate the two spellings. Predicted equivalent in the
+  spec before the run rather than triaged afterwards. (2026-08-26.)

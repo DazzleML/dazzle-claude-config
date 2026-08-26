@@ -1,0 +1,67 @@
+{
+  "harness": {
+    "name": "mutation_sweep.py",
+    "version": "0.1.0"
+  },
+  "environment": {
+    "python": "3.12.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "root": ".",
+    "test_command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-x",
+      "tests/test_uncommitted_checkout_guard.py"
+    ],
+    "timestamp": "2026-08-26T02:38:39-04:00"
+  },
+  "results": [
+    {
+      "id": "G1",
+      "file": "dazzle_claude_config/collect.py",
+      "note": "and->or: --force no longer disables the guard (and a None repo raises).",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "G2",
+      "file": "dazzle_claude_config/collect.py",
+      "note": "Guard inverted: clean files are refused and dirty ones are overwritten.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "G3",
+      "file": "dazzle_claude_config/gitops.py",
+      "note": "Off-by-one in the porcelain parse: paths keep a leading character and never match.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "G4",
+      "file": "dazzle_claude_config/gitops.py",
+      "note": "A rename reports the OLD path as dirty instead of the new one.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "G5",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "A held-back file no longer affects the exit code; scripts read success.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    }
+  ],
+  "summary": {
+    "killed": 3,
+    "survived": 2
+  },
+  "anomalies": []
+}

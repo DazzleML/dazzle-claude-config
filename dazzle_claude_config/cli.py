@@ -256,7 +256,7 @@ def _run_migration(args, manifest, checkout, roots, repo, target,
 
 
 def _migrate_verb(args, manifest, checkout, roots, repo) -> int:
-    """`ccs migrate [target]` -- the guided, verified take-the-new-starter."""
+    """`ccs seed migrate [target]` -- the guided, verified take-the-new-starter."""
     from . import migrate as _migrate
     if getattr(args, "target", None):
         return _run_migration(args, manifest, checkout, roots, repo,
@@ -272,7 +272,7 @@ def _migrate_verb(args, manifest, checkout, roots, repo) -> int:
                        "payload's version"))
         return EXIT_CLEAN
     print(c("bold", "can be migrated") +
-          c("dim", "  (ccs migrate <file> keeps your copy, then proves it)"))
+          c("dim", "  (ccs seed migrate <file> keeps your copy, then proves it)"))
     for target, state in cands:
         why = ("the payload replaced a starter you never edited" if
                state == "untouched-old" else
@@ -1978,7 +1978,13 @@ def main(argv: list[str] | None = None) -> int:
                 # skipped for direction or reported as pending removals mean
                 # live does NOT match the checkout, and saying so was a lie
                 # the summary told for months (#29).
-                held = bool(wrong_dir or r.removals_pending or r.mismatched)
+                # r.failed belongs here too: a file that could not be
+                # written (read-only target, permissions) is the most
+                # literal form of "held back", and omitting it printed
+                # "your live config already matches the checkout"
+                # directly beneath the FAILED line naming the file.
+                held = bool(wrong_dir or r.removals_pending
+                            or r.mismatched or r.failed)
                 print(c("green", "apply: nothing to do") +
                       (" -- nothing was applied; see the skipped and pending "
                        "lines above for what differs"

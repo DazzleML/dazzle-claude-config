@@ -1,0 +1,34 @@
+{
+  "harness": {
+    "name": "mutation_sweep.py",
+    "version": "0.1.0"
+  },
+  "environment": {
+    "python": "3.12.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "root": ".",
+    "test_command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-x",
+      "tests/test_uncommitted_checkout_guard.py"
+    ],
+    "timestamp": "2026-08-26T02:40:09-04:00"
+  },
+  "results": [
+    {
+      "id": "G4",
+      "file": "dazzle_claude_config/gitops.py",
+      "note": "A rename reports the OLD path as dirty instead of the new one.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    }
+  ],
+  "summary": {
+    "killed": 1
+  },
+  "anomalies": []
+}

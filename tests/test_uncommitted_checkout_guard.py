@@ -150,6 +150,19 @@ def test_summary_does_not_claim_completeness_when_a_file_was_refused(world, caps
 
 # -- the primitive ------------------------------------------------------------
 
+def test_a_staged_rename_marks_the_NEW_path_dirty(world):
+    # G4 (mutation sweep): porcelain reports "R  old -> new". The file collect
+    # would write is the NEW path, so that is the one that must be guarded --
+    # recording the old one leaves the renamed file unprotected. Reorganising
+    # a payload (cutting content into machines/<box>/) is rename-heavy, which
+    # is exactly when this matters.
+    from dazzle_claude_config.gitops import CheckoutRepo
+    _git(world["co"], "mv", "dotclaude/skills/other.md", "dotclaude/skills/moved.md")
+    dirty = CheckoutRepo(world["co"]).dirty_paths()
+    assert "dotclaude/skills/moved.md" in dirty          # the new path is guarded
+    assert " -> " not in " ".join(dirty)                 # never the raw rename line
+
+
 def test_dirty_paths_reports_modified_staged_and_untracked(world):
     from dazzle_claude_config.gitops import CheckoutRepo
     _co_file(world).write_bytes(CHECKOUT_EDIT)                  # modified
@@ -161,3 +174,39 @@ def test_dirty_paths_reports_modified_staged_and_untracked(world):
     assert "dotclaude/skills/new.md" in dirty
     assert "dotclaude/skills/late.md" in dirty
     assert "dotclaude/skills/other.md" not in dirty
+
+
+def test_collect_does_not_resurrect_the_OLD_path_of_a_rename(world, capsys):
+    """The vacated side of a rename is protected work, not a missing file.
+
+    Found by the v0.5.9 release-gate run. `git mv b.md renamed.md` leaves the
+    checkout with b.md ABSENT and live still holding it. collect read that as
+    an ordinary addition and copied live's b.md back in -- exit 0, reported as
+    a plain `copied:` -- so the checkout ended up with BOTH files and the
+    rename was silently half-reverted.
+
+    A rename is one edit with two halves: the new path holds the content, and
+    the old path's absence is the other half. Guarding only the new side
+    reintroduced the exact #13 failure through the fix for #13.
+    """
+    _git(world["co"], "mv", "dotclaude/skills/other.md",
+         "dotclaude/skills/renamed.md")
+    rc = main(_ccs(world, "collect"))
+    out = capsys.readouterr().out
+    assert not _co_file(world, "other.md").exists(), out   # stays dead
+    assert "REFUSING" in out and "other.md" in out
+    assert rc == 1
+
+
+def test_a_staged_deletion_is_protected_too(world, capsys):
+    """The same principle without a rename: a deliberately deleted file.
+
+    `git rm` stages a deletion that exists in no commit. collect would see
+    live's copy as an addition and put the file back.
+    """
+    _git(world["co"], "rm", "-q", "dotclaude/skills/other.md")
+    rc = main(_ccs(world, "collect"))
+    out = capsys.readouterr().out
+    assert not _co_file(world, "other.md").exists(), out
+    assert "REFUSING" in out and "other.md" in out
+    assert rc == 1

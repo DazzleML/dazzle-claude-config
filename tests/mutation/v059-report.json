@@ -1,0 +1,68 @@
+{
+  "harness": {
+    "name": "mutation_sweep.py",
+    "version": "0.1.0"
+  },
+  "environment": {
+    "python": "3.12.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "root": ".",
+    "test_command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-x",
+      "tests/test_uncommitted_checkout_guard.py",
+      "tests/test_untracked_attribution.py"
+    ],
+    "timestamp": "2026-08-26T12:53:48-04:00"
+  },
+  "results": [
+    {
+      "id": "H1",
+      "file": "dazzle_claude_config/gitops.py",
+      "note": "Only the NEW side of a rename is guarded -- the original defect, restored.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "H2",
+      "file": "dazzle_claude_config/gitops.py",
+      "note": "Only the OLD side is guarded -- the mirror defect; the renamed file loses protection.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "H3",
+      "file": "dazzle_claude_config/gitops.py",
+      "note": "old/new swapped. Both still land in the set, so this should be EQUIVALENT.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "H4",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "r.failed dropped from held -- the original defect, restored.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "H5",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "or -> and: held only when EVERY category fired at once.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    }
+  ],
+  "summary": {
+    "killed": 4,
+    "survived": 1
+  },
+  "anomalies": []
+}

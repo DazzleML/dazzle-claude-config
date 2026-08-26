@@ -188,3 +188,36 @@ def test_a_committed_file_touched_on_both_sides_is_still_refused(world, capsys):
     out = capsys.readouterr().out
     assert rc == 1
     assert "REFUSING" in out and "BOTH sides" in out
+
+
+def test_a_failed_write_stops_the_match_claim(world, capsys, monkeypatch):
+    """A file that could NOT be written is the most literal held-back work.
+
+    Found by the v0.5.9 release-gate checklist run, not by the suite: the
+    `held` check listed direction-skips, pending removals and mismatches but
+    omitted r.failed, so a run whose only outcome was a failed write printed
+    "your live config already matches the checkout" directly beneath the
+    FAILED line naming the file it could not write. The exit code was right
+    the whole time; only the sentence lied.
+    """
+    import shutil as _sh
+    from dazzle_claude_config import apply as _apply
+
+    # Live is missing the file, so apply would SEED it -- the one path whose
+    # only result can be a failure, which is what makes the summary reachable.
+    (world["live"] / "skills" / "committed.md").unlink()
+
+    real_copy = _sh.copy2
+
+    def refuse(src, dst, *a, **k):
+        if "committed.md" in str(dst):
+            raise OSError(13, "Permission denied")
+        return real_copy(src, dst, *a, **k)
+
+    monkeypatch.setattr(_apply.shutil, "copy2", refuse)
+
+    rc = main(_ccs(world, "apply"))
+    out = capsys.readouterr().out
+    assert "FAILED" in out or "failed" in out          # the truth is printed
+    assert "already matches the checkout" not in out, out   # ...and not contradicted
+    assert rc != 0

@@ -214,8 +214,19 @@ class CheckoutRepo:
             if len(line) < 4:
                 continue
             path = line[3:].strip()
-            if " -> " in path:          # a rename reports "old -> new"
-                path = path.split(" -> ", 1)[1]
+            if " -> " in path:
+                # A rename reports "old -> new", and BOTH sides are work that
+                # exists in no commit. The new path holds the content; the old
+                # path's ABSENCE is the other half of the same edit. Guarding
+                # only the new side let `collect` read the old path as an
+                # ordinary missing file and backfill it from live -- silently
+                # resurrecting the file the rename removed, exit 0, reported
+                # as an ordinary `copied:`. That is the #13 failure itself,
+                # reintroduced through the fix for #13.
+                old_p, new_p = path.split(" -> ", 1)
+                out.add(old_p.strip().strip('"'))
+                out.add(new_p.strip().strip('"'))
+                continue
             out.add(path.strip('"'))
         return out
 

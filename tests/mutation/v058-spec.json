@@ -1,0 +1,47 @@
+{
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-x",
+  "tests/test_uncommitted_checkout_guard.py"
+ ],
+ "mutations": [
+  {
+   "id": "G1",
+   "file": "dazzle_claude_config/collect.py",
+   "original": "    dirty = repo.dirty_paths() if (repo is not None and not force) else set()",
+   "mutated": "    dirty = repo.dirty_paths() if (repo is not None or not force) else set()",
+   "note": "and->or: --force no longer disables the guard (and a None repo raises)."
+  },
+  {
+   "id": "G2",
+   "file": "dazzle_claude_config/collect.py",
+   "original": "            if repo_rel_guard in dirty:\n                result.refused_uncommitted.append(repo_rel_guard)\n                continue",
+   "mutated": "            if repo_rel_guard not in dirty:\n                result.refused_uncommitted.append(repo_rel_guard)\n                continue",
+   "note": "Guard inverted: clean files are refused and dirty ones are overwritten."
+  },
+  {
+   "id": "G3",
+   "file": "dazzle_claude_config/gitops.py",
+   "original": "            path = line[3:].strip()",
+   "mutated": "            path = line[2:].strip()",
+   "note": "Off-by-one in the porcelain parse: paths keep a leading character and never match."
+  },
+  {
+   "id": "G4",
+   "file": "dazzle_claude_config/gitops.py",
+   "original": "            if \" -> \" in path:          # a rename reports \"old -> new\"\n                path = path.split(\" -> \", 1)[1]",
+   "mutated": "            if \" -> \" in path:          # a rename reports \"old -> new\"\n                path = path.split(\" -> \", 1)[0]",
+   "note": "A rename reports the OLD path as dirty instead of the new one."
+  },
+  {
+   "id": "G5",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "            return (EXIT_DRIFT if (r.refused_secrets or r.refused_uncommitted)\n                    else EXIT_CLEAN)",
+   "mutated": "            return (EXIT_DRIFT if r.refused_secrets\n                    else EXIT_CLEAN)",
+   "note": "A held-back file no longer affects the exit code; scripts read success."
+  }
+ ]
+}

@@ -178,25 +178,27 @@ def humanize_remote(raw: str, fetched=UNSPECIFIED, detail: str = "",
     if pulled is not None:
         n, ok, reason = pulled
         if ok:
-            return f"{local}, was {n} behind -- fast-forwarded"
-        return f"{local}, {n} behind -- fast-forward refused: {reason}"
+            return f"{local}, your checkout was {n} behind -- fast-forwarded"
+        return (f"{local}, your checkout is {n} behind -- "
+                f"fast-forward refused: {reason}")
     ahead = re.search(r"ahead (\d+)", track or "")
     behind = re.search(r"behind (\d+)", track or "")
     if fetched is False:
         why = f": {detail}" if detail else ""
-        bits = [b for b in (ahead and f"{ahead.group(1)} ahead",
-                            behind and f"{behind.group(1)} behind") if b]
+        bits = [b for b in (ahead and f"your checkout {ahead.group(1)} ahead",
+                            behind and f"your checkout {behind.group(1)} behind") if b]
         stale = f" ({' / '.join(bits)} as last fetched)" if bits \
             else " (as last fetched)"
         return f"{local}, pull status unknown -- fetch failed{why}{stale}"
     if ahead and behind:
-        return (f"{local}, {ahead.group(1)} ahead / {behind.group(1)} behind "
-                f"-- diverged; resolve in the checkout (ccs git ...)")
+        return (f"{local}, your checkout is {ahead.group(1)} ahead and "
+                f"{behind.group(1)} behind -- diverged; "
+                f"resolve in the checkout (ccs git ...)")
     if behind:
         hint = "ccs status --pull" if fetched else "ccs git fetch to confirm"
         stale = "" if fetched else " as last fetched"
-        return f"{local}, {behind.group(1)} behind{stale} -- {hint}"
+        return f"{local}, your checkout is {behind.group(1)} behind{stale} -- {hint}"
     if ahead:
-        return f"{local}, {ahead.group(1)} ahead -- ccs git push to share"
+        return f"{local}, your checkout is {ahead.group(1)} ahead -- ccs git push to share"
     return f"{local}, in sync" + ("" if fetched is True else " as last fetched"
                                   if fetched is None else "")

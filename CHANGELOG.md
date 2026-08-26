@@ -4,6 +4,18 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-08-26
+
+### Fixed
+- **`collect` resurrected the vacated side of a rename.** `git mv a.md b.md` leaves the checkout with `a.md` absent while your live config still holds it, and `collect` read that as an ordinary new file and copied it back -- exit 0, reported as a plain `copied:`, leaving the checkout with both names and the rename half-reverted. A rename is one edit with two halves: the new path holds the content, the old path's absence is the rest of it. Both are now protected. This was the same class of silent loss the guard was written to prevent, reintroduced through the guard itself, and it was found by a human-run checklist rather than by the suite.
+- **`apply` claimed your live config already matched while printing the failure that proves it did not.** A file that could not be written -- a read-only target, a permissions problem -- was left out of the check that decides whether anything was held back, so the summary printed "your live config already matches the checkout" directly beneath the line naming the file it had failed to write. The exit code was correct throughout; only the sentence was wrong.
+- **`ccs seed migrate` told you to run a command that no longer exists.** Listing what could be migrated printed the hint `(ccs migrate <file> keeps your copy, then proves it)` -- the pre-rename spelling, which stopped parsing one release earlier. The rename updated the actionable hints elsewhere and missed this one. A test now scans the package for the old spelling instead of pinning a single line, so the next rename cannot leave a reachable string behind either.
+- **`collect` protected a renamed checkout file under its old name.** A staged rename reports `old -> new`, and the uncommitted-work guard recorded the path on the left. The file `collect` would actually overwrite is the one on the right, so a renamed file was left unguarded -- and reorganising a payload is mostly renames. Found by mutation testing.
+
+### Changed
+- **The remote line says which side is ahead.** `main, 2 ahead` did not tell you whether your checkout had commits to push or the remote had commits to pull, and the two call for opposite actions. Every state now names one subject: `your checkout is 2 ahead -- ccs git push to share`, `your checkout is 3 behind -- ccs status --pull`, `your checkout is 2 ahead and 3 behind -- diverged`. The wording matches the summary line, which already named the side.
+- README documents `ccs git <any git command>` and the `auto_pull` setting, which shipped in 0.5.1 without ever appearing there, and the `collect` refusal from 0.5.8.
+
 ## [0.5.8] - 2026-08-26
 
 ### Fixed
@@ -285,7 +297,7 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.8...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.9...HEAD
 [0.5.8]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.5...v0.5.6
