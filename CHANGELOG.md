@@ -4,6 +4,12 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.8] - 2026-08-26
+
+### Fixed
+- **`collect` no longer overwrites an uncommitted edit in the checkout.** The checkout is an editing surface, not only a mirror -- settings are edited there by design, and reorganising a payload is hours of working-tree changes. A file whose working-tree copy differed from HEAD was overwritten with the live version, silently, exit 0: work that existed in no commit and on no other machine, gone with a success message. `collect` now refuses that file, names the three ways out (commit it, discard it, or `--force`), collects everything else, and exits nonzero because something you asked for did not happen. Untracked files are protected the same way -- `git diff` would not report them, and losing an uncommitted draft is losing it either way. One `git status` for the whole run, not one call per file.
+- `collect`'s "nothing to do" line no longer claims the checkout already has everything when a file was held back.
+
 ## [0.5.7] - 2026-08-25
 
 ### Changed
@@ -279,7 +285,8 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.7...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.8...HEAD
+[0.5.8]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.4...v0.5.5

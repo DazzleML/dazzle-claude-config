@@ -201,6 +201,24 @@ class CheckoutRepo:
             pairs.append((commit, norm))
         return pairs
 
+    def dirty_paths(self) -> set[str]:
+        """Repo-relative paths whose working-tree state differs from HEAD.
+
+        Modified, staged, AND untracked -- an untracked checkout file that
+        `collect` overwrites loses work exactly as a modified one does, and
+        `git diff HEAD` would not report it. One porcelain call for the whole
+        run rather than a `git diff` per file (#13).
+        """
+        out: set[str] = set()
+        for line in self.porcelain():
+            if len(line) < 4:
+                continue
+            path = line[3:].strip()
+            if " -> " in path:          # a rename reports "old -> new"
+                path = path.split(" -> ", 1)[1]
+            out.add(path.strip('"'))
+        return out
+
     def check_ignored(self, rel_paths: list[str]) -> list[str]:
         """A8: which of these repo-relative paths does git ignore/exclude?
 

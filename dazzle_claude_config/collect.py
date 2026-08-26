@@ -27,6 +27,7 @@ class CollectResult:
     missing_live: list[str] = field(default_factory=list)  # in repo, gone locally (report only)
     git_ignored: list[str] = field(default_factory=list)   # A8 violations
     denied_live: list[str] = field(default_factory=list)   # deny-matched, never sync
+    refused_uncommitted: list[str] = field(default_factory=list)  # #13: checkout edit at risk
     failed: list[tuple[str, str]] = field(default_factory=list)  # (path, reason)
     mismatched: list[str] = field(default_factory=list)    # type-conflict entries
     only_matched: int = 0                                  # entries passing --only
@@ -41,11 +42,17 @@ class CollectResult:
 def collect(manifest: Manifest, checkout: Path, roots: dict[str, Path],
             repo: CheckoutRepo | None = None, dry_run: bool = False,
             only: str | None = None, add: bool = False,
-            skip: dict[str, str] | None = None,
+            skip: dict[str, str] | None = None, force: bool = False,
             box_tags=frozenset()) -> CollectResult:
     result = CollectResult()
     copied_repo_rels: list[str] = []
 
+    # #13: the checkout is also an EDITING surface. A file whose working-tree
+    # copy differs from HEAD holds work that exists in no commit and on no
+    # other machine, so overwriting it with live's content destroys the only
+    # copy -- silently, exit 0, as measured in the two-machine simulator
+    # (SC-03). One porcelain call answers it for every file in the run.
+    dirty = repo.dirty_paths() if (repo is not None and not force) else set()
     for d in diff_all(manifest, checkout, roots, box_tags):
         reached, sub = only_scope(only, d.entry.repo)
         if not reached:
@@ -102,6 +109,11 @@ def collect(manifest: Manifest, checkout: Path, roots: dict[str, Path],
             hits = scan_file(src, display)
             if hits:
                 result.refused_secrets.extend(hits)
+                continue
+
+            repo_rel_guard = f"{d.entry.repo}/{rel}" if rel else d.entry.repo
+            if repo_rel_guard in dirty:
+                result.refused_uncommitted.append(repo_rel_guard)
                 continue
 
             if not dry_run:

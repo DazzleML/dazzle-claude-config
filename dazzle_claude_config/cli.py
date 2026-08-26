@@ -1853,9 +1853,16 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "collect":
             r = collect(manifest, checkout, roots, repo=repo, dry_run=args.dry_run,
                         only=args.only, add=args.add, skip=wrong_dir,
-                        box_tags=box.tags)
+                        box_tags=box.tags, force=getattr(args, "force", False))
             for rel, why in r.skipped:
                 print(f"{c('dim', 'skipped')} {rel} {c('dim', '-- ' + why)}")
+            for rel in r.refused_uncommitted:
+                print(c("bold_red", "REFUSING") + f": {rel} "
+                      + c("dim", "-- the checkout has an uncommitted edit here; "
+                                 "collecting would overwrite work that exists "
+                                 "in no commit"))
+                print(c("dim", f"  commit it, `ccs git checkout -- {rel}` to "
+                               "discard it, or --force to overwrite anyway"))
             for rel, pattern in r.refused_denied:
                 print(f"{c('magenta', 'protected')} {rel} "
                       f"{c('dim', f'-- matches deny rule {pattern!r}, stays local')}")
@@ -1899,11 +1906,18 @@ def main(argv: list[str] | None = None) -> int:
                                "include them, or exclude them for good in "
                                "ccs-manifest.json's collect_exclude"))
             if not r.copied and not r.refusals:
+                held = bool(r.refused_uncommitted or r.skipped)
                 print(c("green", "collect: nothing to do") +
-                      " -- the checkout already has everything from your live config")
+                      (" -- nothing was collected; see the lines above for what "
+                       "was held back"
+                       if held else
+                       " -- the checkout already has everything from your live config"))
             # Deny-list skips are the guard WORKING (intended state, exit 0);
-            # credential-shaped content in allowlisted files is an alarm (exit 1).
-            return EXIT_DRIFT if r.refused_secrets else EXIT_CLEAN
+            # credential-shaped content in allowlisted files is an alarm (exit 1),
+            # and so is a file held back because the checkout has uncommitted
+            # work there -- something the user asked for did not happen.
+            return (EXIT_DRIFT if (r.refused_secrets or r.refused_uncommitted)
+                    else EXIT_CLEAN)
 
         if args.verb == "apply":
             backups = roots["USER_CLAUDE"] / "backups" / "ccs"
