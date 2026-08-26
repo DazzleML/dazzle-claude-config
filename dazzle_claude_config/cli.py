@@ -258,7 +258,7 @@ def _run_migration(args, manifest, checkout, roots, repo, target,
 def _migrate_verb(args, manifest, checkout, roots, repo) -> int:
     """`ccs migrate [target]` -- the guided, verified take-the-new-starter."""
     from . import migrate as _migrate
-    if args.target:
+    if getattr(args, "target", None):
         return _run_migration(args, manifest, checkout, roots, repo,
                               args.target)
     findings, errors = _seed_findings(manifest, checkout, roots, repo,
@@ -299,6 +299,8 @@ def _seed_verb(args, manifest, checkout, roots, repo) -> int:
         if not findings:
             print(c("dim", "no file seed entries apply to this box"))
         return EXIT_CLEAN
+    if args.action == "migrate":
+        return _migrate_verb(args, manifest, checkout, roots, repo)
     target = args.target
     if not target:
         print(c("bold_red", "error") + f": seed {args.action} needs a target "
@@ -757,13 +759,24 @@ where the files live:
 the three answers when yours differs:
   keep yours      ccs seed keep <file> --until-changed   (asks again only
                   if the payload's starter changes; --always never asks)
-  take theirs     ccs apply --reseed <file>   (your copy is backed up
-                  first, to the apply run's backup folder)
-  look first      open the two printed paths in any diff tool
+  take theirs     ccs seed migrate <file>
+  look first      ccs seed diff <file>, or open the two printed paths
+
+what `seed migrate` does, in order:
+  1. hashes your live file
+  2. keeps a copy of it OUTSIDE the apply backup tree (written by a
+     different code path, so one bug cannot quietly spoil both copies)
+  3. takes the payload's version (apply --reseed underneath, which makes
+     its own backup as always)
+  4. proves it: both copies must hash to your pre-migration bytes, and
+     the live file must now match the payload's
+
+  Bare `ccs seed migrate` lists the starter files this box could migrate.
+  --dry-run says what would happen and writes nothing.
 """)
     _add_common(sd, suppress=True)
     sd.add_argument("action", nargs="?", default=None,
-                    choices=("keep", "reset", "list", "diff"),
+                    choices=("keep", "reset", "list", "diff", "migrate"),
                     help="leave it off to walk every open question one "
                          "keystroke at a time")
     sd.add_argument("target", nargs="?", default=None,
@@ -777,6 +790,8 @@ the three answers when yours differs:
     sd.add_argument("--tool", default=None,
                     help="diff tool to open for `seed diff` and the walk's "
                          "[d] key (default: whichever one ccs can resolve)")
+    sd.add_argument("--dry-run", action="store_true",
+                    help="for `seed migrate`: say what would happen, write nothing")
 
     st = sub.add_parser("setup", help="configure this machine -- bare `setup` "
                         "runs the doctor check (what is configured, what is "
@@ -828,30 +843,6 @@ the words:
                                "`ccs seed -h`")
     _add_common(dr, suppress=True)
 
-    mg = sub.add_parser("migrate", help="take the payload's version of a "
-                        "starter file you already have -- keeps your copy, "
-                        "then proves both backups hold your original bytes",
-                        formatter_class=argparse.RawDescriptionHelpFormatter,
-                        description="Replace one of your starter files with "
-                                    "the payload's newer version, safely and "
-                                    "verifiably.",
-                        epilog="""what it does, in order:
-  1. hashes your live file
-  2. keeps a copy of it OUTSIDE the apply backup tree (written by a
-     different code path, so one bug cannot quietly spoil both copies)
-  3. takes the payload's version (`apply --reseed`, which makes its own
-     backup as always)
-  4. proves it: both copies must hash to your pre-migration bytes, and
-     the live file must now match the payload's
-
-  Bare `ccs migrate` lists the starter files this box could migrate.
-  --dry-run says what would happen and writes nothing.
-""")
-    _add_common(mg, suppress=True)
-    mg.add_argument("target", nargs="?", default=None,
-                    help="the starter file to migrate (e.g. CLAUDE.md); "
-                         "leave it off to list the candidates")
-    mg.add_argument("--dry-run", action="store_true")
     return p
 
 
@@ -1440,16 +1431,18 @@ def _seed_findings(manifest, checkout, roots, repo, box_tags, user_claude):
 # (user finding, 2026-08-25).
 _SEED_ACTIONABLE = {
     "untouched-old": ("yellow", "an unchanged copy of an older starter (the "
-                                "payload has a newer one). ccs apply --reseed "
-                                "{t} takes it; your copy is backed up first"),
+                                "payload has a newer one). ccs seed migrate {t} "
+                                "takes it, keeps your copy, and proves both "
+                                "backups hold your original bytes"),
     "open": ("yellow", "delivered once as a starter, then yours (and yours "
                        "now differs from the payload's version). Yours or the "
                        "payload's? keep yours: ccs seed keep {t}; take the "
-                       "payload's: ccs apply --reseed {t} (backs yours up); "
-                       "or open both files below in your diff tool first"),
+                       "payload's: ccs seed migrate {t} (keeps a copy of "
+                       "yours); or open both files below in your diff tool "
+                       "first"),
     "reopened": ("yellow", "the payload's starter changed since you chose to "
                            "keep yours. Keep it again: ccs seed keep {t}; "
-                           "take the payload's: ccs apply --reseed {t}; or "
+                           "take the payload's: ccs seed migrate {t}; or "
                            "compare the files below"),
 }
 _SEED_QUIET = {
@@ -1761,9 +1754,6 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "seed":
             args._box_tags = box.tags
             return _seed_verb(args, manifest, checkout, roots, repo)
-        if args.verb == "migrate":
-            args._box_tags = box.tags
-            return _migrate_verb(args, manifest, checkout, roots, repo)
         fetched, fetch_detail, behind = (render.UNSPECIFIED, "", None)
         pulled: tuple[int, bool, str] | None = None
         if args.verb in ("status", "collect", "apply"):

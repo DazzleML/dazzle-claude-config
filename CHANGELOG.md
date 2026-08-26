@@ -4,6 +4,12 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-08-25
+
+### Changed
+- **`ccs migrate` is now `ccs seed migrate`.** It only ever acted on starter files -- it resolves its target through the seed entries and refuses anything else -- so it belongs beside `keep`, `reset`, `list`, and `diff` rather than beside the verbs that sync your whole configuration. Bare `ccs seed migrate` still lists what this box could migrate; `--dry-run` still writes nothing. The verb was one release old and unreleased to PyPI, so nothing outside a development box could depend on the old spelling.
+- **The starter-file hints now point at the verified path.** Where they used to say `ccs apply --reseed <file>` -- the raw operation -- they say `ccs seed migrate <file>`, which does the same reseed but keeps a copy of your version outside the backup tree first and proves both copies hold your original bytes afterwards. `apply --reseed` remains as the low-level escape hatch it always was.
+
 ## [0.5.6] - 2026-08-25
 
 ### Fixed
@@ -273,7 +279,8 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.7...HEAD
+[0.5.7]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.3...v0.5.4

@@ -98,7 +98,7 @@ def test_untouched_old_seed_auto_offers_reseed(world, capsys):
     (world["live"] / "CLAUDE.md").write_bytes(SEED_V1.replace(b"\n", b"\r\n"))
     rc, out = _status(world, capsys=capsys)
     assert "an unchanged copy of an older starter" in out
-    assert "ccs apply --reseed" in out
+    assert "ccs seed migrate" in out        # the verified path, not the raw one
     assert "or the payload's?" not in out
 
 

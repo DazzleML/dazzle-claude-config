@@ -1,0 +1,34 @@
+{
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-x",
+  "tests/test_migrate_and_walk.py",
+  "tests/test_seed_visibility.py"
+ ],
+ "mutations": [
+  {
+   "id": "R1",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "    if args.action == \"migrate\":\n        return _migrate_verb(args, manifest, checkout, roots, repo)\n    target = args.target",
+   "mutated": "    if args.action == \"diff\":\n        return _migrate_verb(args, manifest, checkout, roots, repo)\n    target = args.target",
+   "note": "Routing keyed on the wrong action: diff runs the migration, migrate falls through to the target guard."
+  },
+  {
+   "id": "R2",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "                    choices=(\"keep\", \"reset\", \"list\", \"diff\", \"migrate\"),",
+   "mutated": "                    choices=(\"keep\", \"reset\", \"list\", \"diff\"),",
+   "note": "The new sub-action is not accepted by the parser at all."
+  },
+  {
+   "id": "R3",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "                                \"payload has a newer one). ccs seed migrate {t} \"",
+   "mutated": "                                \"payload has a newer one). ccs apply --reseed {t} \"",
+   "note": "The untouched-old hint reverts to naming the raw path instead of the verified one."
+  }
+ ]
+}

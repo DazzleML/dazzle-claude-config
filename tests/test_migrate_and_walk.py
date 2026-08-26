@@ -74,7 +74,7 @@ def _backup_root(w) -> Path:
 # -- the migration, end to end ------------------------------------------------
 
 def test_migration_keeps_a_copy_takes_the_new_one_and_proves_it(world, capsys, monkeypatch):
-    rc = main(_ccs(world, "migrate", "CLAUDE.md"))
+    rc = main(_ccs(world, "seed", "migrate", "CLAUDE.md"))
     out = capsys.readouterr().out
     assert rc == 0, out
     assert (world["live"] / "CLAUDE.md").read_bytes() == NEW      # took the new
@@ -90,7 +90,7 @@ def test_backup_root_honours_the_user_claude_override(world, capsys):
     # root from the real home directory instead of THIS RUN's territories, so
     # a scratch run wrote into the operator's actual ~/claude/backups. Both
     # copies must land under the --user-claude tree and nowhere else.
-    rc = main(_ccs(world, "migrate", "CLAUDE.md"))
+    rc = main(_ccs(world, "seed", "migrate", "CLAUDE.md"))
     assert rc == 0
     kept = list((world["user"] / "backups" / "pre-migrate").glob("CLAUDE.md.*"))
     assert kept and kept[0].read_bytes() == OLD
@@ -100,7 +100,7 @@ def test_backup_root_honours_the_user_claude_override(world, capsys):
 
 
 def test_migration_dry_run_writes_nothing(world, capsys, monkeypatch):
-    rc = main(_ccs(world, "migrate", "CLAUDE.md", "--dry-run"))
+    rc = main(_ccs(world, "seed", "migrate", "CLAUDE.md", "--dry-run"))
     out = capsys.readouterr().out
     assert rc == 0
     assert "would keep a copy" in out and "nothing was written" in out
@@ -108,20 +108,31 @@ def test_migration_dry_run_writes_nothing(world, capsys, monkeypatch):
 
 
 def test_migration_refuses_a_file_this_box_does_not_have(world, capsys):
-    rc = main(_ccs(world, "migrate", "NOTES.md"))
+    rc = main(_ccs(world, "seed", "migrate", "NOTES.md"))
     err = capsys.readouterr().err
     assert rc == 2
     assert "does not exist on this box yet" in err
 
 
 def test_migration_refuses_a_non_seed_target(world, capsys):
-    rc = main(_ccs(world, "migrate", "not-a-thing.md"))
+    rc = main(_ccs(world, "seed", "migrate", "not-a-thing.md"))
     assert rc == 2
     assert "is not a seed entry" in capsys.readouterr().err
 
 
+def test_migrate_is_only_reachable_under_seed(capsys):
+    # v0.5.7: the verb moved. `ccs migrate` must fail as an unknown verb
+    # rather than silently doing something, and `seed migrate` must exist.
+    from dazzle_claude_config.cli import _build_parser
+    with pytest.raises(SystemExit):
+        _build_parser().parse_args(["migrate", "CLAUDE.md"])
+    args = _build_parser().parse_args(["seed", "migrate", "CLAUDE.md"])
+    assert args.verb == "seed" and args.action == "migrate"
+    assert args.target == "CLAUDE.md"
+
+
 def test_bare_migrate_lists_candidates(world, capsys):
-    rc = main(_ccs(world, "migrate"))
+    rc = main(_ccs(world, "seed", "migrate"))
     out = capsys.readouterr().out
     assert rc == 0
     assert "can be migrated" in out and "CLAUDE.md" in out
@@ -130,7 +141,7 @@ def test_bare_migrate_lists_candidates(world, capsys):
 
 def test_bare_migrate_says_nothing_to_do_when_clean(world, capsys):
     (world["live"] / "CLAUDE.md").write_bytes(NEW)
-    rc = main(_ccs(world, "migrate"))
+    rc = main(_ccs(world, "seed", "migrate"))
     assert rc == 0
     assert "nothing to migrate" in capsys.readouterr().out
 
@@ -148,7 +159,7 @@ def test_verification_catches_a_corrupted_backup(world, monkeypatch, capsys):
         return dest
     real_save = _backup.BackupSession.save
     monkeypatch.setattr(_backup.BackupSession, "save", sabotage)
-    rc = main(_ccs(world, "migrate", "CLAUDE.md"))
+    rc = main(_ccs(world, "seed", "migrate", "CLAUDE.md"))
     out = capsys.readouterr().out
     assert rc == 1
     assert "does NOT match the pre-migration bytes" in out
@@ -168,7 +179,7 @@ def test_verification_catches_a_corrupted_keep_copy(world, monkeypatch, capsys):
         Path(dst).write_bytes(b"truncated")
         return dst
     monkeypatch.setattr(_m.shutil, "copy2", bad_copy)
-    rc = main(_ccs(world, "migrate", "CLAUDE.md"))
+    rc = main(_ccs(world, "seed", "migrate", "CLAUDE.md"))
     out = capsys.readouterr().out
     assert rc == 1
     assert "does not match the bytes that were live" in out
@@ -185,7 +196,7 @@ def test_missing_backup_dir_is_a_problem_not_a_pass(world, monkeypatch, capsys):
         r.backup_dir = None
         return r
     monkeypatch.setattr(_m, "apply", no_backup_dir)
-    rc = main(_ccs(world, "migrate", "CLAUDE.md"))
+    rc = main(_ccs(world, "seed", "migrate", "CLAUDE.md"))
     out = capsys.readouterr().out
     assert rc == 1
     assert "PROBLEM" in out and "no backup directory" in out
@@ -202,7 +213,7 @@ def test_failed_reseed_reports_applys_own_reason(world, monkeypatch, capsys):
         r.failed.append(("CLAUDE.md", "disk on fire"))
         return r
     monkeypatch.setattr(_m, "apply", failing)
-    rc = main(_ccs(world, "migrate", "dotclaude/CLAUDE.md"))   # repo path
+    rc = main(_ccs(world, "seed", "migrate", "dotclaude/CLAUDE.md"))   # repo path
     out = capsys.readouterr().out
     assert rc == 1
     assert "disk on fire" in out
@@ -226,7 +237,7 @@ def test_reopened_files_are_migration_candidates(world, capsys):
     (world["live"] / "CLAUDE.md").write_bytes(MINE)
     seeddecisions.keep("CLAUDE.md", "until-changed", "stale-hash",
                        world["user"])
-    rc = main(_ccs(world, "migrate"))
+    rc = main(_ccs(world, "seed", "migrate"))
     out = capsys.readouterr().out
     assert rc == 0
     assert "CLAUDE.md" in out and "both moved" in out
