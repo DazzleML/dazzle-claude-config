@@ -4,6 +4,22 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.10] - 2026-08-26
+
+Four defects in the `apply` / `collect` chain, fixed together because they share one root cause: content alone cannot distinguish "you changed it" from "you never received it". Every one of them was a place where ccs guessed that question and acted on the guess.
+
+### Fixed
+- **A file that was merely out of date in your live config was reported as being AHEAD of the checkout, and `apply` told you to run `ccs collect` on it** -- which would have overwritten the newer committed version with the older one. Nothing had edited the file; a change had been committed in the checkout and never applied. A side that holds no lines the other side lacks cannot be ahead, so ccs now says so plainly: such files are labelled `unattributed`, the entry above them reads `direction unproven` rather than claiming everything under it is one-sided, and both name staleness as the likelier reading and point at `ccs diff` rather than at a verb that writes. The check applies only where the direction was estimated -- when your live file exactly matches a commit, the direction is known, and an upstream retirement that leaves the checkout holding nothing unique is still reported correctly as the checkout being ahead.
+- **`apply` put back files you had deleted on purpose, every time it ran.** Whether an absent file was deleted deliberately or never arrived cannot be answered from the checkout -- its history contains every file it has ever had, either way -- so ccs stops guessing and asks. It now tells you when it installs a file your live config did not have, and `ccs apply --keep-deleted <path>` records your answer in `~/claude/ccs-deleted.json` so it stops coming back. `--restore-deleted` undoes that. The record is ordinary editable JSON with a comment explaining what it is.
+- **`ccs-config.json` was ignored entirely if your editor saved it with a byte-order mark.** Every setting silently reverted to its default -- `"auto_pull": true` was read as false -- and the error explaining why was recorded somewhere nothing ever printed. The file is meant to be edited by hand, and the editors people reach for on Windows add that mark. It is now read the same way as every other file ccs keeps in your own directory, and a genuinely broken config warns, exactly as a broken box file always did.
+- **A retired file was reported forever instead of being cleaned up.** When the payload deliberately deletes a file, every machine kept its copy until someone ran `ccs apply --sync-removals` by hand, so a half-migrated box could carry both the old command and the new skill, and both would load.
+
+### Added
+- **`sync_removals`, a three-way setting for files the payload has retired.** `untouched` (the new default) moves a retired file into the backup directory only when your copy still matches a committed version -- such a copy holds nothing of yours, so nothing of yours is lost. A copy you edited is reported and kept, with both ways forward named. `all` stages every retired file; `never` only reports. `--sync-removals` and `--no-sync-removals` override the setting for one run in either direction, and `CCS_SYNC_REMOVALS` sets it per shell.
+- Retired files are never removed automatically from a checkout that is not on a branch, or that is behind its remote. On a stale tree everything added since looks retired, and the automatic policy would clear it in one pass. An explicit `--sync-removals` still works; only the automatic behaviour stands down, and it says why.
+- An unrecognised value for `sync_removals` falls back to `never`, the safest of the three, rather than to the default. A typo must never widen what the tool deletes.
+
+
 ## [0.5.9] - 2026-08-26
 
 ### Fixed
@@ -297,7 +313,7 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.9...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.10...HEAD
 [0.5.8]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.5...v0.5.6

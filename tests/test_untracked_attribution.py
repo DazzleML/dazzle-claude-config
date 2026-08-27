@@ -131,17 +131,25 @@ def test_status_does_not_assert_a_direction_it_cannot_know(world, capsys):
 # -- the summary that lied ----------------------------------------------------
 
 def test_summary_does_not_claim_a_match_when_something_was_held_back(world, capsys):
-    # A live-ahead file is skipped by the direction guard; the run copies
+    # A retired file whose live copy YOU edited is held back, the run copies
     # nothing, and the old summary then claimed live matched the checkout.
+    #
+    # This used an UNMODIFIED retired copy until #31. Under the `untouched`
+    # default that file is now correctly staged away rather than held back,
+    # so the old setup no longer produced the state under test. Editing live's
+    # copy restores it -- and exercises the more important half of the policy,
+    # since a retired file you edited is the one ccs must never remove quietly.
     _git(world["co"], "rm", "-q", "--cached", "dotclaude/skills/committed.md")
     (world["co"] / "dotclaude" / "skills" / "committed.md").unlink()
     _git(world["co"], "commit", "-qm", "remove it")
-    # live still has it -> a pending removal, i.e. something held back
+    (world["live"] / "skills" / "committed.md").write_bytes(
+        b"# committed\nand then I edited it locally\n")
     rc = main(_ccs(world, "apply"))
     out = capsys.readouterr().out
     assert "nothing to do" in out
     assert "already matches the checkout" not in out
-    assert "see the skipped and pending lines above" in out
+    assert (world["live"] / "skills" / "committed.md").exists(), \
+        "a retired file you edited must not be staged away"
 
 
 def test_summary_still_claims_a_match_when_truly_clean(world, capsys):

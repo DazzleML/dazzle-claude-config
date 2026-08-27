@@ -70,6 +70,15 @@ DEFAULTS = {
     # merged, rebased, or stashed. status only -- apply/collect keep their
     # warning (see require_current). --pull / --no-pull per run.
     "auto_pull": False,
+
+    # untouched | all | never -- what to do about a file the payload RETIRED
+    # that this box still carries. "untouched" stages it into the backup dir
+    # only when the live copy still matches a committed version, i.e. holds
+    # nothing of yours; a copy you edited is reported instead, because
+    # staging away work the payload never had is the one thing this tool
+    # refuses to do quietly. "all" stages every retired file (the old
+    # --sync-removals); "never" only reports (the old default).
+    "sync_removals": "untouched",
 }
 
 ENV_MAP = {
@@ -83,10 +92,12 @@ ENV_MAP = {
     "fetch_timeout": "CCS_FETCH_TIMEOUT",
     "require_current": "CCS_REQUIRE_CURRENT",
     "auto_pull": "CCS_AUTO_PULL",
+    "sync_removals": "CCS_SYNC_REMOVALS",
 }
 
 VALID_ON_DIVERGENCE = {"prompt", "skip", "force"}
 VALID_STATUS_DETAIL = {"auto", "long", "compact"}
+VALID_SYNC_REMOVALS = {"untouched", "all", "never"}
 
 
 def config_path(user_claude: Path | None = None) -> Path:
@@ -126,7 +137,13 @@ def load(user_claude: Path | None = None, overrides: dict | None = None) -> dict
     path = config_path(user_claude)
     if path.exists():
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            # utf-8-SIG: this file is meant to be hand-edited, and the
+            # Windows editors people reach for write a BOM. Reading it
+            # as plain utf-8 made every setting silently revert to its
+            # default -- auto_pull: true read as False -- with the
+            # decode error recorded somewhere nothing printed it. The
+            # other three user-territory records already tolerate a BOM.
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
             if not isinstance(data, dict):
                 errors.append(f"{path}: expected a JSON object")
             else:
@@ -152,6 +169,16 @@ def load(user_claude: Path | None = None, overrides: dict | None = None) -> dict
             f"on_divergence={cfg['on_divergence']!r} is not one of "
             f"{sorted(VALID_ON_DIVERGENCE)}; using 'prompt'")
         cfg["on_divergence"] = "prompt"
+
+    # An unrecognised removal policy falls back to the SAFEST value, not the
+    # default one: a typo must never widen what the tool deletes on your
+    # behalf. "never" only reports, so a misspelling costs a manual step
+    # rather than a file staged away.
+    if cfg["sync_removals"] not in VALID_SYNC_REMOVALS:
+        errors.append(
+            f"sync_removals={cfg['sync_removals']!r} is not one of "
+            f"{sorted(VALID_SYNC_REMOVALS)}; using 'never' (report only)")
+        cfg["sync_removals"] = "never"
 
     # A non-TTY can never answer a prompt. Downgrade rather than hang, and say
     # so, because a run that silently changed policy is worse than a slow one.

@@ -1,0 +1,62 @@
+{
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-x",
+  "tests/test_attribution_honesty.py",
+  "tests/test_deleted_on_purpose.py"
+ ],
+ "mutations": [
+  {
+   "id": "J1",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "        if only_live == 0:",
+   "mutated": "        if only_live < 0:",
+   "note": "#36 veto never fires for live -- the original defect restored."
+  },
+  {
+   "id": "J2",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "        if only_repo == 0:",
+   "mutated": "        if only_repo < 0:",
+   "note": "#36 veto never fires for the checkout -- the mirror defect."
+  },
+  {
+   "id": "J3",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "        if only_live == 0:",
+   "mutated": "        if only_live >= 0:",
+   "note": "Veto ALWAYS fires -- every live-ahead becomes unattributed (over-correction)."
+  },
+  {
+   "id": "J4",
+   "file": "dazzle_claude_config/apply.py",
+   "original": "            if (rel in d.repo_only and deletions is not None\n                    and deletions.holds(display)):",
+   "mutated": "            if (rel not in d.repo_only and deletions is not None\n                    and deletions.holds(display)):",
+   "note": "#12 guard inverted -- honours the record for MODIFIED files, not absent ones."
+  },
+  {
+   "id": "J5",
+   "file": "dazzle_claude_config/apply.py",
+   "original": "            if rel in d.repo_only:\n                result.restored.append(display)",
+   "mutated": "            if rel not in d.repo_only:\n                result.restored.append(display)",
+   "note": "The 'installed what live lacked' notice fires on the wrong set."
+  },
+  {
+   "id": "J6",
+   "file": "dazzle_claude_config/deleted.py",
+   "original": "        if not isinstance(rec, dict) or rec.get(\"decision\") != \"keep-deleted\":",
+   "mutated": "        if not isinstance(rec, dict):",
+   "note": "Record validation drops the decision check -- any object counts as keep-deleted."
+  },
+  {
+   "id": "J7",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "                            or r.mismatched or r.failed or r.held_deleted)",
+   "mutated": "                            or r.mismatched or r.failed)",
+   "note": "A held-back deletion no longer counts as held back -- the overclaim returns."
+  }
+ ]
+}

@@ -1,0 +1,62 @@
+{
+ "test_command": [
+  "python",
+  "-m",
+  "pytest",
+  "-q",
+  "-x",
+  "tests/test_sync_removals_policy.py",
+  "tests/test_userconfig_honesty.py"
+ ],
+ "mutations": [
+  {
+   "id": "K1",
+   "file": "dazzle_claude_config/apply.py",
+   "original": "                stage = _live_matches_history(repo, repo_rel, live_path)",
+   "mutated": "                stage = not _live_matches_history(repo, repo_rel, live_path)",
+   "note": "The narrowing inverted: stages the files you EDITED, keeps the untouched ones."
+  },
+  {
+   "id": "K2",
+   "file": "dazzle_claude_config/apply.py",
+   "original": "            if sync_removals == \"all\":\n                stage = True",
+   "mutated": "            if sync_removals == \"never\":\n                stage = True",
+   "note": "'never' stages everything -- the safest policy becomes the most destructive."
+  },
+  {
+   "id": "K3",
+   "file": "dazzle_claude_config/apply.py",
+   "original": "    return any(h == live_hash for _commit, h in repo.seed_history(repo_rel))",
+   "mutated": "    return True",
+   "note": "Every live copy counts as unmodified -- the narrowing is gone entirely."
+  },
+  {
+   "id": "K4",
+   "file": "dazzle_claude_config/userconfig.py",
+   "original": "        cfg[\"sync_removals\"] = \"never\"",
+   "mutated": "        cfg[\"sync_removals\"] = \"all\"",
+   "note": "A typo'd policy falls back to the MOST destructive value instead of the safest."
+  },
+  {
+   "id": "K5",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "                if repo.branch_info().startswith(\"## HEAD\"):",
+   "mutated": "                if False:",
+   "note": "The detached-checkout guard never fires."
+  },
+  {
+   "id": "K6",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "                elif behind:\n                    stale = f\"the checkout is {behind} behind its upstream\"",
+   "mutated": "                elif False:\n                    stale = f\"the checkout is {behind} behind its upstream\"",
+   "note": "The behind-upstream half of the guard never fires."
+  },
+  {
+   "id": "K7",
+   "file": "dazzle_claude_config/userconfig.py",
+   "original": "            data = json.loads(path.read_text(encoding=\"utf-8-sig\"))",
+   "mutated": "            data = json.loads(path.read_text(encoding=\"utf-8\"))",
+   "note": "The BOM fix reverted."
+  }
+ ]
+}

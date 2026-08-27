@@ -1,0 +1,83 @@
+{
+  "harness": {
+    "name": "mutation_sweep.py",
+    "version": "0.1.0"
+  },
+  "environment": {
+    "python": "3.12.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "root": ".",
+    "test_command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-x",
+      "tests/test_sync_removals_policy.py",
+      "tests/test_userconfig_honesty.py"
+    ],
+    "timestamp": "2026-08-26T17:56:10-04:00"
+  },
+  "results": [
+    {
+      "id": "K1",
+      "file": "dazzle_claude_config/apply.py",
+      "note": "The narrowing inverted: stages the files you EDITED, keeps the untouched ones.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "K2",
+      "file": "dazzle_claude_config/apply.py",
+      "note": "'never' stages everything -- the safest policy becomes the most destructive.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "K3",
+      "file": "dazzle_claude_config/apply.py",
+      "note": "Every live copy counts as unmodified -- the narrowing is gone entirely.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "K4",
+      "file": "dazzle_claude_config/userconfig.py",
+      "note": "A typo'd policy falls back to the MOST destructive value instead of the safest.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "K5",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "The detached-checkout guard never fires.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "K6",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "The behind-upstream half of the guard never fires.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "K7",
+      "file": "dazzle_claude_config/userconfig.py",
+      "note": "The BOM fix reverted.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    }
+  ],
+  "summary": {
+    "killed": 7
+  },
+  "anomalies": []
+}

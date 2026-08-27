@@ -167,7 +167,10 @@ At that point the only thing left is `git push`, and the checkout is the same on
 |---|---|
 | `apply` backs up every file it overwrites | before writing, into `~/claude/backups/ccs/` |
 | `merge --accept` backs up **both** sides | before writing either, into `~/claude/backups/ccs-merge/` |
-| Nothing is ever deleted in place | removals are staged into the backup dir with `--sync-removals`, or only reported |
+| Nothing is ever deleted in place | a removal is a MOVE into the backup dir, never an unlink. What gets moved is the `sync_removals` policy: `untouched` (default) stages a retired file only when your copy still matches a committed version, `all` stages every one, `never` only reports |
+| A retired file you edited is never staged away | your copy holds something the payload never had, so it is reported and kept, naming both `ccs collect` (keep it) and `--sync-removals` (drop it) |
+| A stale checkout never auto-removes | detached, or behind its remote, means everything added since looks retired; the automatic policy stands down and says why. `--sync-removals` still works |
+| A file you deleted on purpose stays deleted | `ccs apply --keep-deleted <path>` records it; `--restore-deleted` undoes it. The payload and your machine cannot distinguish "you deleted it" from "it never arrived", so ccs asks instead of guessing |
 | The manifest is an allowlist | a file not listed never moves, in either direction |
 | Credentials are refused on the way in | `.credentials.json`, `.claude.json`, `settings.local.json`, `*.db`, `history.jsonl` and credential-shaped content, regardless of what the manifest says |
 | A file only in your live config is left alone | reported as `local only`, never as a pending removal |

@@ -18,6 +18,7 @@ from .manifest import Manifest, ManifestError
 from .platform_info import backup_root, default_checkout_dir, territory_roots
 from .render import c
 from . import boxconfig, userconfig
+from . import deleted as _deleted
 from .syncmap import (_normalize_eol, diff_all, entry_gate_reason, files_differ,
                       line_stats, only_scope, rel_in_scope)
 
@@ -714,8 +715,21 @@ day to day, once it is installed:
                                  "(dotclaude), or a subtree inside an entry "
                                  "(dotclaude/skills/test-mutation); whole path components only")
             sp.add_argument("--sync-removals", action="store_true",
-                            help="stage live-only files into the backup dir "
-                                 "(default: report only)")
+                            help="stage EVERY file the payload retired into "
+                                 "the backup dir, edited ones included "
+                                 "(same as sync_removals=all)")
+            sp.add_argument("--no-sync-removals", action="store_true",
+                            help="only report files the payload retired; stage "
+                                 "none of them (same as sync_removals=never)")
+            sp.add_argument("--keep-deleted", default=None, metavar="TARGET",
+                            help="record that you removed TARGET from your live "
+                                 "config on purpose, so apply stops putting it "
+                                 "back (a file the checkout has and live lacks "
+                                 "is otherwise indistinguishable from one that "
+                                 "never reached this box)")
+            sp.add_argument("--restore-deleted", default=None, metavar="TARGET",
+                            help="forget a --keep-deleted record, so TARGET is "
+                                 "installed again on the next apply")
             sp.add_argument("--reseed", default=None, metavar="TARGET",
                             help="for ONE seed-if-absent entry (by target or repo "
                                  "path, e.g. CLAUDE.md): back the existing live file "
@@ -907,14 +921,46 @@ def _classify(checkout, d, rel):
     if found is None:
         return "no base", "no ancestor in history attributes this change -- treat as both sides"
     base_n = _normalize_eol(found[0])
+
+    # The base is ESTIMATED (see merge.infer_base). An estimate that names a
+    # side as "ahead" is checkable against a fact already computed for the
+    # same file: how many lines each side holds that the other does not.
+    #
+    # A side that contributes ZERO unique lines cannot be ahead. Measured
+    # (#36, tests/one-offs/thinking/poc_attribution_inversion_sweep.py): a
+    # live file that is merely STALE -- nothing edited it, a checkout change
+    # was committed and never applied -- was labelled "live ahead" with
+    # `0 only live` printed on the same line, and `apply` then told the user
+    # to run `ccs collect`, which reverts the committed work. The estimate
+    # and the counts disagreed, and the counts were right.
+    #
+    # So the counts get a veto. They cannot catch every wrong verdict -- a
+    # genuinely two-sided misattribution has unique lines on both sides --
+    # but they catch this entire shape, using nothing new.
+    only_live, _replaced, _only_repo, _reg = line_stats(
+        d.live_base / rel if rel else d.live_base,
+        d.repo_base / rel if rel else d.repo_base)
+
     if base_n == _normalize_eol(ours):
+        # NO veto on this branch. `base == ours` means the live file
+        # byte-equals a commit -- infer_base rule 2, "distance zero, proof not
+        # guess". The checkout is then certainly the side that moved, and a
+        # move that REMOVES lines (an upstream retirement) legitimately leaves
+        # the checkout holding nothing unique. Vetoing here called the most
+        # proven case in the tool "direction unproven"; caught by the J2
+        # mutant, which survived precisely because no test covered it.
         return "one-sided", f"checkout ahead; live == {found[1]}"
     if base_n == _normalize_eol(theirs):
+        if only_live == 0:
+            return "unattributed", ("history points to live, but live holds no "
+                                    "lines the checkout lacks -- live is more "
+                                    "likely STALE than ahead; ccs diff to look")
         return "one-sided", f"live ahead; checkout == {found[1]}"
     return "two-sided", f"both moved since {found[1]}"
 
 
 _KIND_COLOR = {"one-sided": "green", "two-sided": "magenta", "no base": "yellow",
+               "unattributed": "yellow",
                "local snap": "yellow", "differs": "dim"}
 
 
@@ -1592,6 +1638,10 @@ def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None,
                 single = n == 1 and d.repo_base.is_file()
                 kinds = classified.get(id(d), {})
                 k2 = sum(1 for k, _ in kinds.values() if k in ("two-sided", "no base"))
+                # #36: an unattributed file is NOT one-sided. Rolling it up as
+                # "all one-sided" made the entry line contradict the file line
+                # printed directly beneath it.
+                kU = sum(1 for k, _ in kinds.values() if k == "unattributed")
                 if single:
                     # A single-file entry gets no per-file breakdown line, so its
                     # evidence (which commit a side equals) has to ride here.
@@ -1601,9 +1651,31 @@ def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None,
                     bits.append("differs -- " + label
                                 + (f" ({c('dim', evidence)})" if evidence else ""))
                 else:
-                    bits.append(f"{render.n_files(n)} {'differs' if n == 1 else 'differ'}"
-                                + (f" ({c('magenta', str(k2))} on both sides)" if k2 else
-                                   f" ({c('green', 'all one-sided')})" if kinds else ""))
+                    # "all one-sided" is a claim about EVERY file under this
+                    # entry, so it may only be made when every kind actually
+                    # is one-sided. Special-casing the kinds known at the time
+                    # was the original bug and then, briefly, my fix for it:
+                    # `local snap` fell through the special cases and got
+                    # rolled up as one-sided anyway, contradicting the file
+                    # line printed directly beneath. Count what is NOT
+                    # one-sided instead, so a kind added later cannot be
+                    # silently absorbed into the green claim.
+                    unsure = sum(1 for k, _ in kinds.values() if k != "one-sided")
+                    if k2 and unsure > k2:
+                        tag = (f" ({c('magenta', str(k2))} on both sides, "
+                               f"{c('yellow', str(unsure - k2))} undecided)")
+                    elif k2:
+                        tag = f" ({c('magenta', str(k2))} on both sides)"
+                    elif unsure and unsure == len(kinds):
+                        tag = f" ({c('yellow', 'direction unproven')})"
+                    elif unsure:
+                        tag = f" ({c('yellow', str(unsure))} undecided)"
+                    elif kinds:
+                        tag = f" ({c('green', 'all one-sided')})"
+                    else:
+                        tag = ""
+                    bits.append(f"{render.n_files(n)} "
+                                f"{'differs' if n == 1 else 'differ'}" + tag)
                 if n <= 25:
                     ol = ch = orp = reg = 0
                     for rel in d.modified:
@@ -1745,6 +1817,13 @@ def main(argv: list[str] | None = None) -> int:
         # touches remote-tracking refs only; a failure is reported, never
         # fatal -- ccs must keep working offline.
         cfg = userconfig.load(roots.get('USER_CLAUDE'))
+        # A broken user config silently reverts every preference to its
+        # default. userconfig.load() has always recorded that in _errors and
+        # nothing ever printed it, so the box config warned and this one did
+        # not -- the asymmetry meant a typo'd ccs-config.json looked exactly
+        # like an absent one.
+        for err in cfg.get('_errors') or ():
+            print(c('yellow', f'warning: user config: {err}'))
         # BOX. What this machine declares itself to be (~/claude/ccs-box.json).
         # Tag-gated entries apply and collect only where every tag is
         # declared; a missing or broken file means no tags, never all.
@@ -1921,11 +2000,71 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.verb == "apply":
             backups = roots["USER_CLAUDE"] / "backups" / "ccs"
+            uc = roots.get("USER_CLAUDE")
+            if getattr(args, "keep_deleted", None):
+                where = _deleted.keep_deleted(args.keep_deleted, uc)
+                print(c("bold_green", "recorded") +
+                      f" {args.keep_deleted} " +
+                      c("dim", f"as deleted on purpose -- {where}"))
+                return EXIT_CLEAN
+            if getattr(args, "restore_deleted", None):
+                ok = _deleted.restore(args.restore_deleted, uc)
+                print((c("bold_green", "forgot") if ok else c("yellow", "no record for")) +
+                      f" {args.restore_deleted}" +
+                      (c("dim", " -- apply will install it again") if ok else ""))
+                return EXIT_CLEAN
+            # #31: flag beats config beats default, and BOTH flags exist so a
+            # configured policy can be overridden in either direction for one
+            # run -- a setting you cannot turn off is a trap.
+            removal_policy = cfg.get("sync_removals", "never")
+            if args.sync_removals:
+                removal_policy = "all"
+            elif getattr(args, "no_sync_removals", False):
+                removal_policy = "never"
+            # GUARD: never auto-remove from a checkout that is not a current
+            # branch tip. `ccs git checkout <old-sha>` then `ccs apply` would
+            # make everything added since look retired -- present in history,
+            # absent from the worktree -- and strip it from the live tree in
+            # one pass. Backed up, but alarming and easy to trigger. An
+            # EXPLICIT --sync-removals still works; only the automatic
+            # policies stand down.
+            if removal_policy == "untouched" and repo is not None:
+                stale = None
+                # `branch_name` returns the literal string "HEAD" for a
+                # detached checkout, not None -- the regex matches "## HEAD
+                # (no branch)" with local="HEAD". Testing it for None left
+                # the guard silently dead, which the detached-checkout test
+                # caught. The prefix is what actually distinguishes it, and
+                # it is what humanize_remote already keys on.
+                if repo.branch_info().startswith("## HEAD"):
+                    stale = "the checkout is not on a branch"
+                elif behind:
+                    stale = f"the checkout is {behind} behind its upstream"
+                if stale:
+                    print(c("yellow", "not staging retired files") +
+                          c("dim", f" -- {stale}; everything added since would "
+                                   "look retired. Reporting instead "
+                                   "(--sync-removals overrides)."))
+                    removal_policy = "never"
+            dels = _deleted.load(uc)
+            for e in dels.errors:
+                print(c("yellow", f"warning: {e}"))
             r = apply(manifest, checkout, roots, backups, repo=repo,
                       dry_run=args.dry_run, only=args.only,
-                      sync_removals=args.sync_removals,
+                      sync_removals=removal_policy,
                       skip=wrong_dir, box_tags=box.tags,
-                      reseed=getattr(args, "reseed", None))
+                      reseed=getattr(args, "reseed", None),
+                      deletions=dels)
+            for rel in r.held_deleted:
+                print(f"{c('dim', 'left out')} {rel} "
+                      f"{c('dim', '-- you removed this on purpose; ')}"
+                      f"{c('dim', 'ccs apply --restore-deleted ' + rel + ' undoes that')}")
+            if r.restored and not args.dry_run:
+                print(c("yellow", f"installed {render.n_files(len(r.restored))} "
+                                  "your live config did not have") +
+                      c("dim", " -- if you removed any on purpose, "
+                               "`ccs apply --keep-deleted <path>` records that "
+                               "and stops re-installing it"))
             for rel, why in r.skipped:
                 print(f"{c('dim', 'skipped')} {rel} {c('dim', '-- ' + why)}")
             for rel, pattern in r.refused_denied:
@@ -1950,7 +2089,16 @@ def main(argv: list[str] | None = None) -> int:
                 verb = "would seed" if args.dry_run else "seeded"
                 print(f"{c('green', verb)} {rel} {c('dim', '-- was absent locally')}")
             for rel in r.removals_staged:
-                print(f"{c('yellow', 'removal staged to backup')}: {rel}")
+                # Name the REASON, not the mechanism: "staged to backup" says
+                # what ccs did; the user needs to know why their file went.
+                print(f"{c('yellow', 'removed')}: {rel} "
+                      + c("dim", "-- retired upstream, your copy was "
+                                 f"unmodified; backed up to {r.backup_dir}"))
+            for rel in r.removals_kept:
+                print(f"{c('yellow', 'kept')}: {rel} "
+                      + c("dim", "-- retired upstream, but YOUR copy differs "
+                                 "from every committed version; `ccs collect` "
+                                 "to keep it, --sync-removals to stage it away"))
             for rel in r.local_only:
                 print(f"{c('dim', 'local only')} {rel} "
                       + c("dim", "-- new here, never in the checkout; left alone"))
@@ -1973,7 +2121,12 @@ def main(argv: list[str] | None = None) -> int:
                                                          for t in r.seeded):
                 print(c("yellow", f"warning: --reseed {rs!r} matched no seed "
                                   "entry with an existing live file (nothing done)"))
-            if not (r.copied or r.seeded or r.reseeded or r.removals_staged or r.refused_denied):
+            # r.removals_kept deliberately NOT listed here: a kept file is
+            # work HELD BACK, not work done, so it must not suppress the
+            # summary -- it must make the summary say something was held.
+            # It appears in `held` below instead.
+            if not (r.copied or r.seeded or r.reseeded or r.removals_staged
+                    or r.refused_denied):
                 # Only a claim of equality when nothing was held back. Files
                 # skipped for direction or reported as pending removals mean
                 # live does NOT match the checkout, and saying so was a lie
@@ -1983,8 +2136,8 @@ def main(argv: list[str] | None = None) -> int:
                 # literal form of "held back", and omitting it printed
                 # "your live config already matches the checkout"
                 # directly beneath the FAILED line naming the file.
-                held = bool(wrong_dir or r.removals_pending
-                            or r.mismatched or r.failed)
+                held = bool(wrong_dir or r.removals_pending or r.removals_kept
+                            or r.mismatched or r.failed or r.held_deleted)
                 print(c("green", "apply: nothing to do") +
                       (" -- nothing was applied; see the skipped and pending "
                        "lines above for what differs"
@@ -1996,7 +2149,8 @@ def main(argv: list[str] | None = None) -> int:
             # live-side denials, which are the guard working as intended):
             # someone committed a never-sync file to the repo. Exit 1 until
             # it is removed there.
-            return EXIT_DRIFT if (r.removals_pending or r.refused_denied) \
+            return EXIT_DRIFT if (r.removals_pending or r.removals_kept
+                                  or r.refused_denied) \
                 else EXIT_CLEAN
 
         if args.verb == "merge":

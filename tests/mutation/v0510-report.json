@@ -1,0 +1,84 @@
+{
+  "harness": {
+    "name": "mutation_sweep.py",
+    "version": "0.1.0"
+  },
+  "environment": {
+    "python": "3.12.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "root": ".",
+    "test_command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-x",
+      "tests/test_attribution_honesty.py",
+      "tests/test_deleted_on_purpose.py"
+    ],
+    "timestamp": "2026-08-26T15:34:07-04:00"
+  },
+  "results": [
+    {
+      "id": "J1",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "#36 veto never fires for live -- the original defect restored.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "J2",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "#36 veto never fires for the checkout -- the mirror defect.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "J3",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Veto ALWAYS fires -- every live-ahead becomes unattributed (over-correction).",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "J4",
+      "file": "dazzle_claude_config/apply.py",
+      "note": "#12 guard inverted -- honours the record for MODIFIED files, not absent ones.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "J5",
+      "file": "dazzle_claude_config/apply.py",
+      "note": "The 'installed what live lacked' notice fires on the wrong set.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "J6",
+      "file": "dazzle_claude_config/deleted.py",
+      "note": "Record validation drops the decision check -- any object counts as keep-deleted.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "J7",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "A held-back deletion no longer counts as held back -- the overclaim returns.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    }
+  ],
+  "summary": {
+    "killed": 5,
+    "survived": 2
+  },
+  "anomalies": []
+}

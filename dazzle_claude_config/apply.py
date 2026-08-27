@@ -8,6 +8,7 @@ checkout has unresolved merge conflicts (A11). Deferred strategies
 """
 from __future__ import annotations
 
+import hashlib
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,8 +17,8 @@ from .backup import BackupSession
 from .gitops import CheckoutRepo
 from .manifest import Manifest
 from .secrets import is_denied
-from .syncmap import (diff_all, entry_applies, entry_bases, only_scope,
-                      rel_in_scope, scope_diff)
+from .syncmap import (_normalize_eol, diff_all, entry_applies, entry_bases,
+                      only_scope, rel_in_scope, scope_diff)
 
 
 class ApplyConflictError(RuntimeError):
@@ -32,21 +33,45 @@ class ApplyResult:
     removals_pending: list[str] = field(default_factory=list)  # reported, not synced
     local_only: list[str] = field(default_factory=list)        # never in the checkout
     removals_staged: list[str] = field(default_factory=list)   # moved to backup
+    removals_kept: list[str] = field(default_factory=list)     # #31: retired, but YOUR copy differs
     deferred: list[str] = field(default_factory=list)          # render/plugins entries
     skipped: list[tuple[str, str]] = field(default_factory=list)  # (path, reason): wrong direction
     failed: list[tuple[str, str]] = field(default_factory=list)  # (path, reason)
     mismatched: list[str] = field(default_factory=list)        # type-conflict entries
     only_matched: int = 0                                      # entries passing --only
     reseeded: list[str] = field(default_factory=list)  # --reseed: old copy backed up, seed written
+    restored: list[str] = field(default_factory=list)  # #12: absent from live, installed anyway
+    held_deleted: list[str] = field(default_factory=list)  # #12: you removed it on purpose
     backup_dir: Path | None = None
+
+
+def _live_matches_history(repo, repo_rel: str, live_path) -> bool:
+    """Does the live copy still equal SOME committed version of this path?
+
+    That is the evidence "untouched" rests on. It reuses `seed_history`, which
+    already walks a path's committed versions with LF normalization -- live
+    files on Windows are CRLF while history stores LF, so a raw-bytes compare
+    matches nothing (measured: raw hash matched 0 of 5 versions, normalized
+    matched exactly the right one).
+
+    Any version, not just the last one: a box that applied an older commit and
+    was never updated still holds an unmodified copy, and the user has added
+    nothing to it either way.
+    """
+    try:
+        raw = live_path.read_bytes()
+    except OSError:
+        return False
+    live_hash = hashlib.sha256(_normalize_eol(raw)).hexdigest()
+    return any(h == live_hash for _commit, h in repo.seed_history(repo_rel))
 
 
 def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
           backup_root: Path, repo: CheckoutRepo | None = None,
           dry_run: bool = False, only: str | None = None,
-          sync_removals: bool = False,
+          sync_removals: str | bool = "never",
           skip: dict[str, str] | None = None,
-          box_tags=frozenset(), reseed: str | None = None) -> ApplyResult:
+          box_tags=frozenset(), reseed: str | None = None, deletions=None) -> ApplyResult:
     """`skip` maps a target path (`skills/x.md`) to a reason. Files whose LIVE
     copy is ahead of the checkout have nothing to apply -- copying would revert
     the user's own edits -- so the CLI passes them here, attributed through
@@ -78,6 +103,16 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
             if skip and display in skip:
                 result.skipped.append((display, skip[display]))
                 continue
+            # #12: a path the checkout has and live lacks reads two ways --
+            # "you deleted it" and "it never reached this box" -- and nothing
+            # in the checkout can tell them apart (its history contains every
+            # checkout file either way). So ccs does not guess: it honours a
+            # recorded decision if one exists, and otherwise reports what it
+            # installed into a tree that lacked it.
+            if (rel in d.repo_only and deletions is not None
+                    and deletions.holds(display)):
+                result.held_deleted.append(display)
+                continue
             # Deny-list guards BOTH directions: a HARD_DENY/manifest-denied
             # file committed in the payload must never reach the live tree
             # (tester run-02: apply had no deny awareness at all).
@@ -98,6 +133,8 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
                     result.failed.append((display, str(e)))
                     continue
             result.copied.append(display)
+            if rel in d.repo_only:
+                result.restored.append(display)
         # live-only files under a manifest-owned target: removal candidates
         for rel in d.live_only:
             display = f"{d.entry.target}/{rel}" if rel else d.entry.target
@@ -110,15 +147,38 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
             if repo is not None and not repo.path_in_history(repo_rel):
                 result.local_only.append(display)
                 continue
-            if sync_removals:
+            # #31: three policies, and the NARROWING matters more than the
+            # default. "untouched" stages a retired file only when the live
+            # copy still matches a committed version of it -- such a copy
+            # carries nothing of the user's, so backing it up loses nothing.
+            # A MODIFIED copy is different in kind: the user holds something
+            # the payload never had, and staging that away silently is the
+            # failure mode this project refuses. Those stay reported.
+            live_path = d.live_base / rel if rel else d.live_base
+            stage = False
+            # Back-compat: the parameter was a bool before it was a policy.
+            # A direct caller passing True must not be silently ignored --
+            # that would turn "stage these" into "stage nothing" without a
+            # word, which is the failure class this issue is about.
+            if sync_removals is True:
+                sync_removals = "all"
+            elif sync_removals is False:
+                sync_removals = "never"
+            if sync_removals == "all":
+                stage = True
+            elif sync_removals == "untouched" and repo is not None:
+                stage = _live_matches_history(repo, repo_rel, live_path)
+            if stage:
                 if not dry_run:
                     try:
-                        session.stage_removal(
-                            d.live_base / rel if rel else d.live_base, display)
+                        session.stage_removal(live_path, display)
                     except OSError as e:
                         result.failed.append((display, str(e)))
                         continue
                 result.removals_staged.append(display)
+            elif sync_removals == "untouched":
+                # Retired upstream, but this copy is yours -- say which.
+                result.removals_kept.append(display)
             else:
                 result.removals_pending.append(display)
 
