@@ -1,0 +1,47 @@
+{
+ "test_command": ["python", "-m", "pytest", "-q", "-x", "tests/test_setup_update.py", "tests/test_userconfig_honesty.py"],
+ "mutations": [
+  {
+   "id": "M1",
+   "file": "dazzle_claude_config/userconfig.py",
+   "original": "        missing={k: v for k, v in DEFAULTS.items() if k not in present},",
+   "mutated": "        missing=dict(DEFAULTS),",
+   "note": "Every key counts as missing, so a present value is overwritten with its default -- the additive-only promise broken."
+  },
+  {
+   "id": "M2",
+   "file": "dazzle_claude_config/userconfig.py",
+   "original": "        unknown=sorted(k for k in present if k not in DEFAULTS\n                       and not k.startswith(\"_\")))",
+   "mutated": "        unknown=[])",
+   "note": "Unknown keys are never reported -- a key from a newer ccs passes unmentioned."
+  },
+  {
+   "id": "M3",
+   "file": "dazzle_claude_config/userconfig.py",
+   "original": "    body.update(plan.missing)",
+   "mutated": "    body.update(DEFAULTS)",
+   "note": "Writes every default over the file, discarding the user's own values."
+  },
+  {
+   "id": "M4",
+   "file": "dazzle_claude_config/userconfig.py",
+   "original": "    if plan.unreadable is not None:\n        raise ValueError(f\"refusing to write over an unreadable config: \"\n                         f\"{plan.unreadable}\")",
+   "mutated": "    pass",
+   "note": "An unparseable config is written over instead of refused -- the user's settings destroyed to fix a typo."
+  },
+  {
+   "id": "M5",
+   "file": "dazzle_claude_config/userconfig.py",
+   "original": "        return self.unreadable is None and (not self.exists or bool(self.missing))",
+   "mutated": "        return self.unreadable is None",
+   "note": "A file that is already current is rewritten anyway -- a no-op run touches the file."
+  },
+  {
+   "id": "M6",
+   "file": "dazzle_claude_config/cli.py",
+   "original": "    if plan.unreadable is not None:\n        # Never write over a file we cannot parse: it may hold settings the\n        # user cares about, and rewriting it would destroy them to fix a typo.\n        print(c(\"bold_red\", \"cannot update\") + f\" {plan.path}\")",
+   "mutated": "    if False:\n        print(c(\"bold_red\", \"cannot update\") + f\" {plan.path}\")",
+   "note": "The CLI stops guarding the unreadable case, leaving only the library-level raise."
+  }
+ ]
+}

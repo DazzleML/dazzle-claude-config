@@ -4,6 +4,19 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.11] - 2026-08-27
+
+### Added
+- **`ccs setup update` -- your config file learns what the new version knows.** A config file froze at the settings of whatever version wrote it, and nothing ever updated it, so a machine could run a release for weeks while its own config described an older tool. That was a nuisance until 0.5.10 added a setting that MOVES FILES, at which point a machine could acquire a file-touching behaviour on upgrade with nothing in its config recording that the setting exists. The command adds each setting the new version knows at its documented default, and does nothing else: a value you set is never changed -- not even one that happens to equal the default, because a key holding the default is indistinguishable from one ccs wrote and both are yours. Your keys keep their positions and the new ones are appended after them, so a five-setting addition is a five-line diff rather than a reordered file.
+- A key this version does not recognise is **reported and left exactly where it is**. It usually means a newer ccs wrote the file, and removing it would throw away a setting that version wants back the next time it runs.
+- `--dry-run` prints exactly which settings would be added, with their defaults, and writes nothing.
+- **`ccs setup update --explain [SETTING]` says what a setting means** -- its default, its valid values where it has them, and the environment variable that sets it. With no setting named, all of them. It reads the same words the tool itself uses, so it cannot fall behind what it describes; a config file cannot hold explanations, and this is where they live instead. It writes nothing and needs no config file, so a new machine can ask before it has anything.
+- A config file that cannot be parsed is **never written over**. It may hold settings you care about, and rewriting it to fix a typo would destroy them; ccs says what is wrong and what to do about it instead.
+
+### Changed
+- **Every setting now explains itself.** What each one means used to live in comments beside the code, which meant "what does this key do?" could only be answered by reading source. The explanations are now part of the settings table the program actually reads, so the same words reach you wherever you ask -- and a setting added without an explanation now fails the test suite instead of shipping unexplained. This replaced the alternative of writing the explanations down a second time somewhere else, which drifts: the release before this one added a setting, so any separate documentation written the previous day was already wrong about it.
+
+
 ## [0.5.10] - 2026-08-26
 
 Four defects in the `apply` / `collect` chain, fixed together because they share one root cause: content alone cannot distinguish "you changed it" from "you never received it". Every one of them was a place where ccs guessed that question and acted on the guess.
@@ -313,7 +326,7 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.10...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.11...HEAD
 [0.5.8]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.5...v0.5.6

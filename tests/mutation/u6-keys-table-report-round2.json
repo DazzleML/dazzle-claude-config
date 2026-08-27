@@ -1,0 +1,68 @@
+{
+  "harness": {
+    "name": "mutation_sweep.py",
+    "version": "0.1.0"
+  },
+  "environment": {
+    "python": "3.12.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "root": ".",
+    "test_command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-x",
+      "tests/test_config_keys_table.py",
+      "tests/test_userconfig_honesty.py",
+      "tests/test_sync_removals_policy.py"
+    ],
+    "timestamp": "2026-08-26T23:31:49-04:00"
+  },
+  "results": [
+    {
+      "id": "L1",
+      "file": "dazzle_claude_config/userconfig.py",
+      "note": "DEFAULTS silently drops every enum key -- on_divergence, status_detail, sync_removals vanish.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "L2",
+      "file": "dazzle_claude_config/userconfig.py",
+      "note": "Env vars lose their CCS_ casing, so no environment override is ever found.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "L3",
+      "file": "dazzle_claude_config/userconfig.py",
+      "note": "The valid set becomes a literal COPY again -- the exact two-sources drift the table removed.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "L4",
+      "file": "dazzle_claude_config/userconfig.py",
+      "note": "explain becomes optional, so a key can be added with no explanation at all.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "L5",
+      "file": "dazzle_claude_config/userconfig.py",
+      "note": "A choice is dropped from the table -- the validator would then reject a value the explanation still names.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    }
+  ],
+  "summary": {
+    "killed": 5
+  },
+  "anomalies": []
+}

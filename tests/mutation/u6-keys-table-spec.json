@@ -1,0 +1,40 @@
+{
+ "test_command": ["python", "-m", "pytest", "-q", "-x", "tests/test_config_keys_table.py", "tests/test_userconfig_honesty.py", "tests/test_sync_removals_policy.py"],
+ "mutations": [
+  {
+   "id": "L1",
+   "file": "dazzle_claude_config/userconfig.py",
+   "original": "DEFAULTS = {name: k.default for name, k in KEYS.items()}",
+   "mutated": "DEFAULTS = {name: k.default for name, k in KEYS.items() if k.choices is None}",
+   "note": "DEFAULTS silently drops every enum key -- on_divergence, status_detail, sync_removals vanish."
+  },
+  {
+   "id": "L2",
+   "file": "dazzle_claude_config/userconfig.py",
+   "original": "ENV_MAP = {name: k.env for name, k in KEYS.items()}",
+   "mutated": "ENV_MAP = {name: k.env.lower() for name, k in KEYS.items()}",
+   "note": "Env vars lose their CCS_ casing, so no environment override is ever found."
+  },
+  {
+   "id": "L3",
+   "file": "dazzle_claude_config/userconfig.py",
+   "original": "VALID_SYNC_REMOVALS = KEYS[\"sync_removals\"].choices",
+   "mutated": "VALID_SYNC_REMOVALS = frozenset({\"untouched\", \"all\", \"never\"})",
+   "note": "The valid set becomes a literal COPY again -- the exact two-sources drift the table removed."
+  },
+  {
+   "id": "L4",
+   "file": "dazzle_claude_config/userconfig.py",
+   "original": "    default: object\n    env: str\n    explain: str",
+   "mutated": "    default: object\n    env: str\n    explain: str = \"\"",
+   "note": "explain becomes optional, so a key can be added with no explanation at all."
+  },
+  {
+   "id": "L5",
+   "file": "dazzle_claude_config/userconfig.py",
+   "original": "        choices=frozenset({\"untouched\", \"all\", \"never\"}),",
+   "mutated": "        choices=frozenset({\"untouched\", \"all\"}),",
+   "note": "A choice is dropped from the table -- the validator would then reject a value the explanation still names."
+  }
+ ]
+}

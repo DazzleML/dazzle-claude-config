@@ -5,6 +5,7 @@ Exit codes (A7): 0 = clean/success, 1 = drift or refusals present, 2 = error.
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 import subprocess
 import sys
@@ -338,6 +339,133 @@ def _seed_verb(args, manifest, checkout, roots, repo) -> int:
             "until the payload's seed changes -- then status asks again")
     print(f"kept: {c('cyan', entry.target)} is yours {tail}")
     print(c("dim", f"recorded in {path} (hand-editable; ccs seed reset revokes)"))
+    return EXIT_CLEAN
+
+
+def _wrap(text: str, width: int, indent: str) -> list[str]:
+    """Fold one explanation to the terminal. Long paragraphs are the whole
+    point of the settings table, so they must not run off the right edge."""
+    import textwrap
+    return textwrap.wrap(text, width=width, initial_indent=indent,
+                         subsequent_indent=indent) or [indent.rstrip()]
+
+
+def _explain_settings(only: str | None) -> int:
+    """`ccs setup update --explain [KEY]` -- what a setting means, and where
+    its value would come from.
+
+    The text is the same string the settings table holds, so this cannot drift
+    from the config it describes: there is no second copy to fall behind.
+    """
+    keys = userconfig.KEYS
+    if only is not None and only not in keys:
+        print(c("bold_red", f"no such setting: {only}"))
+        print(c("dim", "  known settings: " + ", ".join(sorted(keys))))
+        return EXIT_ERROR
+    chosen = [only] if only else list(keys)
+    for i, name in enumerate(chosen):
+        k = keys[name]
+        if i:
+            print()
+        print(c("bold_cyan", name) +
+              c("dim", f"  (default: {json.dumps(k.default)})"))
+        if k.choices:
+            print(c("dim", "  one of: ") + ", ".join(sorted(k.choices)))
+        for line in _wrap(k.explain, 76, "  "):
+            print(line)
+        print(c("dim", f"  set it in ~/claude/ccs-config.json, or per shell "
+                       f"with {k.env}"))
+    return EXIT_CLEAN
+
+
+def _setup_update(args) -> int:
+    """`ccs setup update` -- teach an existing config the keys this ccs knows.
+
+    A config file freezes at the schema of whatever version wrote it, and
+    nothing ever updated it (#32). That was a latent annoyance until v0.5.10
+    added `sync_removals`, a default that MOVES FILES -- at which point a box
+    could acquire a file-touching behaviour on upgrade with nothing in its own
+    config recording it.
+
+    Shaped after `csb setup update`: it ACTS where the action has exactly one
+    right answer, and degrades to naming the exact remedy where it does not.
+    Adding a missing key at its documented default is such an action, so there
+    is no per-key prompt. Exit 3 means "I did not act, here is what to run" --
+    the same convention, so a fleet run can be checked rather than assumed.
+    """
+    user_claude = Path(args.user_claude).expanduser() if args.user_claude \
+        else None
+
+    explain = getattr(args, "explain", None)
+    if explain is not None:
+        return _explain_settings(None if explain == "" else explain)
+
+    plan = userconfig.plan_config(user_claude)
+    dry = getattr(args, "dry_run", False)
+
+    if plan.unreadable is not None:
+        # Never write over a file we cannot parse: it may hold settings the
+        # user cares about, and rewriting it would destroy them to fix a typo.
+        print(c("bold_red", "cannot update") + f" {plan.path}")
+        print(c("dim", f"  it does not parse: {plan.unreadable}"))
+        print(c("dim", "  fix the JSON by hand, or move it aside and re-run "
+                       "to get a fresh one"), file=sys.stderr)
+        return EXIT_ERROR
+
+    for key in plan.unknown:
+        # Reported, never removed: an unknown key usually means a NEWER ccs
+        # wrote this file, and deleting it would throw away a setting that
+        # version will want back the next time it runs.
+        print(c("yellow", "unknown key") + f" {key} " +
+              c("dim", "-- this ccs does not know it; left untouched"))
+
+    if not plan.would_write:
+        print(c("bold_green", "config is current") +
+              c("dim", f" -- {plan.path} already has all "
+                       f"{len(userconfig.KEYS)} settings this ccs knows"))
+        return EXIT_CLEAN
+
+    verb = "would add" if dry else "added"
+    if dry:
+        print(c("bold", "would create" if not plan.exists else "would update")
+              + f" {plan.path}")
+    for key, default in plan.missing.items():
+        print(f"  {c('bold_green', verb)} {c('cyan', key)}"
+              f" = {json.dumps(default)}")
+    if dry:
+        n = len(plan.missing)
+        print(c("dim", f"dry run -- nothing was written "
+                       f"({n} setting{'' if n == 1 else 's'} would be added)"))
+        # Every value written IS the setting already in effect, so this
+        # changes nothing ccs does. Worth saying in BOTH cases, and most of
+        # all when updating: a setting like sync_removals governs whether
+        # files get moved, and watching it appear in your config could easily
+        # read as switching it ON. It was already on. Writing it down is what
+        # makes it visible -- which is the entire point of the command.
+        print(c("dim", "  every value written is the setting already in "
+                       "effect, so this changes nothing ccs does -- it makes "
+                       "them visible, and yours to edit"))
+        return EXIT_CLEAN
+
+    userconfig.apply_config_plan(plan)
+    n = len(plan.missing)
+    setting = f"{n} setting{'' if n == 1 else 's'}"
+    if plan.exists:
+        tail = f"-- {setting} added at their defaults; nothing you had set " \
+               "was changed"
+    else:
+        # "nothing you had set was changed" is vacuous when there was no file
+        # to have set anything in. Say what is actually reassuring here.
+        tail = f"-- {setting}, every one at its default"
+    print(c("bold_green", "created" if not plan.exists else "updated") +
+          f" {plan.path} " + c("dim", tail))
+    # Same reassurance as the dry run, and it matters MORE after a real write:
+    # a setting like sync_removals governs whether files get moved, and seeing
+    # it appear in your config reads as switching it on. It was already on.
+    print(c("dim", "  every value written is the setting already in effect, "
+                   "so this changed nothing ccs does"))
+    print(c("dim", "  ccs setup update --explain <key>  says what any of "
+                   "them mean"))
     return EXIT_CLEAN
 
 
@@ -833,9 +961,22 @@ the words:
                    box -- `ccs seed -h` explains those words in full
 """)
     _add_common(st, suppress=True)
-    st.add_argument("what", choices=("box",), nargs="?", default=None,
-                    help="`box` declares this machine's name and tags; leave "
-                         "it off to run the check-up instead")
+    st.add_argument("--dry-run", action="store_true",
+                    help="for `setup update`: print exactly which settings "
+                         "would be added, with their defaults, and write "
+                         "nothing")
+    st.add_argument("--explain", nargs="?", const="", default=None,
+                    metavar="KEY",
+                    help="for `setup update`: say what a setting means, its "
+                         "default, its valid values and its environment "
+                         "variable. With no KEY, every setting. Writes "
+                         "nothing")
+    st.add_argument("what", choices=("box", "update"), nargs="?", default=None,
+                    help="`box` declares this machine's name and tags; "
+                         "`update` teaches your config file the settings this "
+                         "ccs knows, adding them at their defaults and "
+                         "changing nothing you set; leave it off to run the "
+                         "check-up instead")
     st.add_argument("--name", default=None,
                     help="the box's declared name (lowercase; a chosen name, "
                          "not a hostname)")
@@ -1804,6 +1945,8 @@ def main(argv: list[str] | None = None) -> int:
             # with the command that fixes each gap (user request, 2026-08-25
             # -- the csb setup interaction shape).
             return _doctor(args)
+        if args.what == "update":
+            return _setup_update(args)
         return _setup_box(args)
     if args.verb == "doctor":
         return _doctor(args)
@@ -2059,12 +2202,6 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{c('dim', 'left out')} {rel} "
                       f"{c('dim', '-- you removed this on purpose; ')}"
                       f"{c('dim', 'ccs apply --restore-deleted ' + rel + ' undoes that')}")
-            if r.restored and not args.dry_run:
-                print(c("yellow", f"installed {render.n_files(len(r.restored))} "
-                                  "your live config did not have") +
-                      c("dim", " -- if you removed any on purpose, "
-                               "`ccs apply --keep-deleted <path>` records that "
-                               "and stops re-installing it"))
             for rel, why in r.skipped:
                 print(f"{c('dim', 'skipped')} {rel} {c('dim', '-- ' + why)}")
             for rel, pattern in r.refused_denied:
@@ -2074,6 +2211,23 @@ def main(argv: list[str] | None = None) -> int:
             for rel in r.copied:
                 verb = "would apply" if args.dry_run else "applied"
                 print(f"{c('green', verb)}: {rel}")
+            if r.restored and not args.dry_run:
+                # NAME them, and print AFTER the list. This notice offers an
+                # action keyed on a path (`--keep-deleted <path>`), so a bare
+                # COUNT is not actionable. Seen on a real run: "installed 5
+                # files" printed ABOVE 14 undifferentiated `applied:` lines,
+                # leaving the reader to cross-reference `ccs status` by hand
+                # to find which five it meant -- and reading, at first glance,
+                # as a heading for all fourteen.
+                n = len(r.restored)
+                print(c("yellow", f"{render.n_files(n)} above "
+                                  f"{'was' if n == 1 else 'were'} not in your "
+                                  "live config before this run:"))
+                for rel in r.restored:
+                    print(f"    {c('cyan', rel)}")
+                print(c("dim", "  if you removed any of those on purpose, "
+                               "`ccs apply --keep-deleted <path>` records that "
+                               "and stops re-installing it"))
             # Same dry-run honesty as r.copied above: a message that claims
             # completion while nothing was written is exactly the
             # overclaiming this release removes elsewhere (tester finding,

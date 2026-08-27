@@ -66,9 +66,28 @@ def test_apply_says_when_it_installs_a_file_live_did_not_have(tmp_path, capsys):
     w = _world(tmp_path)
     main(_ccs(w, "apply"))
     out = capsys.readouterr().out
-    assert "your live config did not have" in out, out
+    assert "not in your live config before this run" in out, out
     assert "--keep-deleted" in out, out
     assert _unwanted(w).exists()
+
+
+def test_the_notice_NAMES_the_files_it_means(tmp_path, capsys):
+    """A count is not actionable when the action takes a path.
+
+    Found on a real run: "installed 5 files your live config did not have"
+    printed ABOVE fourteen undifferentiated `applied:` lines, offering
+    `--keep-deleted <path>` while naming no path. The reader had to
+    cross-reference `ccs status` by hand to work out which five it meant.
+    """
+    w = _world(tmp_path)
+    main(_ccs(w, "apply"))
+    out = capsys.readouterr().out
+    assert "skills/unwanted.md" in out
+    notice = out.index("not in your live config before this run")
+    assert out.index("applied:") < notice, \
+        "the notice must come AFTER the list, or it reads as its heading"
+    assert out.index("skills/unwanted.md", notice) > notice, \
+        "the named file must appear under the notice, not only above it"
 
 
 def test_an_ordinary_modification_does_not_trigger_the_notice(tmp_path, capsys):
