@@ -1,0 +1,125 @@
+{
+  "harness": {
+    "name": "mutation_sweep.py",
+    "version": "0.1.0"
+  },
+  "environment": {
+    "python": "3.12.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "root": ".",
+    "test_command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-x",
+      "tests/test_explanations_ship.py",
+      "tests/test_config_keys_table.py",
+      "tests/test_setup_update.py"
+    ],
+    "timestamp": "2026-08-27T06:32:52-04:00"
+  },
+  "results": [
+    {
+      "id": "M1",
+      "file": "dazzle_claude_config/userconfig.py",
+      "note": "Degrade-not-raise guard weakened: a non-dict 'settings' (a list or string) slips past and reaches the dict comprehension instead of returning the packaging-slip reason.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M2",
+      "file": "dazzle_claude_config/userconfig.py",
+      "note": "None-vs-truthiness slip: filters on truthiness rather than string type, so non-string prose values are admitted into the explanation table.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M3",
+      "file": "dazzle_claude_config/userconfig.py",
+      "note": "Dropped normalization: a whitespace-only explanation counts as explained, so the replacement for the old TypeError-at-import check stops catching blank prose.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M4",
+      "file": "dazzle_claude_config/userconfig.py",
+      "note": "Swapped return values: the documented (unexplained, orphan) tuple order is reversed, so callers report each gap as the other kind.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M5",
+      "file": "dazzle_claude_config/userconfig.py",
+      "note": "Missing-prose fallback becomes the setting name instead of empty, so every consumer believes an unexplained setting is explained and the 'explanation unavailable' path never fires.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M6",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Sentence split loses the space requirement, so an explanation containing an abbreviation, a version number or a filename is truncated at the first period.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M7",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Boundary flip: a gist exactly `width` characters long is needlessly truncated instead of printed whole.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M8",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Word-boundary trim uses the first space rather than the last, collapsing the gist to a single word.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M9",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "None-vs-truthiness: an empty-string setting name skips the unknown-setting error and falls through to the index instead of exiting EXIT_ERROR.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M10",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Console detection inverted: redirected or piped output gets the abbreviated index while a terminal gets the full dump -- exactly backwards from the documented policy.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M11",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Dropped .strip() on the opt-out env var, so a value with surrounding whitespace no longer suppresses the prompt.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M12",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Wrong stream checked before prompting: stdin availability is never verified, so input() is called with no console attached to read from.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    }
+  ],
+  "summary": {
+    "killed": 6,
+    "survived": 6
+  },
+  "anomalies": []
+}

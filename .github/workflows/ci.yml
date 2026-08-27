@@ -90,3 +90,7 @@ jobs:
       run: |
         pip install twine
         twine check dist/*
+
+    - name: Data files are inside the wheel
+      run: |
+        python scripts/check-wheel-data.py

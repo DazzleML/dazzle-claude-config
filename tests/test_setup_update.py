@@ -23,12 +23,24 @@ from pathlib import Path
 
 import pytest
 
-from dazzle_claude_config import userconfig
+from dazzle_claude_config import cli, merge, userconfig
 from dazzle_claude_config.cli import main
 
 
 def _ccs(user: Path, *rest) -> list[str]:
     return ["--user-claude", str(user), "--no-color", "setup", "update", *rest]
+
+
+def _refuse_to_prompt(prompt: str):
+    """Stand-in for `input` where asking is itself the bug.
+
+    A prompt in a redirected or non-answerable run does not fail loudly -- it
+    HANGS, or silently eats an EOF and looks fine. Asserting on the output
+    afterwards would miss both, so the assertion has to be here, at the moment
+    the question is asked.
+    """
+    raise AssertionError(
+        f"nothing should have been asked here, but ccs asked: {prompt!r}")
 
 
 def _write(user: Path, body: dict) -> Path:
@@ -391,6 +403,233 @@ def test_explain_with_no_key_covers_every_setting(tmp_path, capsys):
     assert rc == 0
     for name in userconfig.KEYS:
         assert name in out, f"{name} missing from --explain"
+
+
+def _console(stdout: bool = True, stdin: bool = True):
+    """Stand in for merge._console_attached, answering per stream.
+
+    Two streams, two questions: can the reader SEE this (stdout), and can they
+    ANSWER it (stdin). They come apart in ordinary use -- `ccs ... | less`
+    reads from a terminal and writes to a pipe -- and the wrong answer to
+    either is a command that hangs on a prompt nobody can see.
+    """
+    import sys as _sys
+
+    def fake(stream):
+        return stdout if stream is _sys.stdout else stdin
+    return fake
+
+
+def test_at_a_console_the_bare_form_is_an_INDEX_not_an_80_line_dump(
+        tmp_path, capsys, monkeypatch):
+    """The defect this replaced: every setting in full, 80 lines, at a prompt.
+
+    That is a scroll, not a reference -- the top is gone before you have read
+    the bottom, and there is nothing to do about it but run it again through a
+    pager. The index fits on a screen and every setting is one command away.
+    """
+    monkeypatch.setattr(merge, "_console_attached", _console())
+    monkeypatch.setattr("builtins.input", lambda _p: "n")
+    user = tmp_path / "user"
+    user.mkdir()
+    rc = main(_ccs(user, "--explain"))
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert len(out.splitlines()) < 25, (
+        f"the index should fit on a screen, got {len(out.splitlines())} lines")
+    for name in userconfig.KEYS:
+        assert name in out, f"{name} missing from the index"
+    assert userconfig.DOCS_URL in out, "the index must name the full reference"
+    assert "--explain <name>" in out, (
+        "the index must teach the per-setting form -- nobody can ask for "
+        "`--explain sync_removals` if nothing told them it exists")
+    # The full text of the longest explanation is NOT here.
+    assert "refuses to do quietly" not in out
+
+
+def test_saying_yes_at_the_prompt_prints_everything(tmp_path, capsys,
+                                                    monkeypatch):
+    monkeypatch.setattr(merge, "_console_attached", _console())
+    monkeypatch.setattr("builtins.input", lambda _p: "y")
+    user = tmp_path / "user"
+    user.mkdir()
+    rc = main(_ccs(user, "--explain"))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "refuses to do quietly" in out, "answering yes must print the text"
+    assert "CCS_SYNC_REMOVALS" in out
+
+
+def test_saying_no_at_the_prompt_prints_nothing_further(tmp_path, capsys,
+                                                        monkeypatch):
+    monkeypatch.setattr(merge, "_console_attached", _console())
+    monkeypatch.setattr("builtins.input", lambda _p: "")   # bare Enter = No
+    user = tmp_path / "user"
+    user.mkdir()
+    assert main(_ccs(user, "--explain")) == 0
+    assert "refuses to do quietly" not in capsys.readouterr().out
+
+
+def test_redirected_output_gets_EVERYTHING_and_is_never_prompted(
+        tmp_path, capsys, monkeypatch):
+    """Redirecting or piping is an explicit request for the content, and
+    nothing scrolls away in a file. Prompting there is the real bug: measured
+    on this machine, a piped run printed the index and then sat on a question
+    the pipe could never answer.
+    """
+    monkeypatch.setattr(merge, "_console_attached", _console(stdout=False))
+    monkeypatch.setattr("builtins.input", _refuse_to_prompt)
+    user = tmp_path / "user"
+    user.mkdir()
+    rc = main(_ccs(user, "--explain"))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "refuses to do quietly" in out
+    assert userconfig.DOCS_URL not in out, (
+        "a redirected run is not being read on a web page; give it the text")
+
+
+def test_a_console_that_cannot_be_ASKED_shows_the_index_and_stops(
+        tmp_path, capsys, monkeypatch):
+    """`ccs ... | less` on some shells, and cron with a tty attached: output
+    is visible, input is not answerable. Show, do not ask."""
+    monkeypatch.setattr(merge, "_console_attached", _console(stdin=False))
+    monkeypatch.setattr("builtins.input", _refuse_to_prompt)
+    user = tmp_path / "user"
+    user.mkdir()
+    assert main(_ccs(user, "--explain")) == 0
+    assert userconfig.DOCS_URL in capsys.readouterr().out
+
+
+def test_CCS_INTERACTIVE_off_suppresses_the_prompt(tmp_path, capsys,
+                                                   monkeypatch):
+    """Read from the environment alone, never from the config file: --explain
+    must keep working on a machine that has no config yet."""
+    monkeypatch.setattr(merge, "_console_attached", _console())
+    monkeypatch.setattr("builtins.input", _refuse_to_prompt)
+    monkeypatch.setenv("CCS_INTERACTIVE", "0")
+    user = tmp_path / "user"
+    user.mkdir()
+    assert main(_ccs(user, "--explain")) == 0
+    assert userconfig.DOCS_URL in capsys.readouterr().out
+
+
+def test_ctrl_c_at_the_prompt_exits_cleanly(tmp_path, capsys, monkeypatch):
+    """A question the reader declines is not an error."""
+    def interrupt(_p):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(merge, "_console_attached", _console())
+    monkeypatch.setattr("builtins.input", interrupt)
+    user = tmp_path / "user"
+    user.mkdir()
+    assert main(_ccs(user, "--explain")) == 0
+
+
+def test_asking_about_ONE_setting_never_prompts_or_links(tmp_path, capsys,
+                                                         monkeypatch):
+    """The form that matters most stays exactly as it was: a direct answer,
+    at a terminal, with no question attached and no page to visit."""
+    monkeypatch.setattr(merge, "_console_attached", _console())
+    monkeypatch.setattr("builtins.input", _refuse_to_prompt)
+    user = tmp_path / "user"
+    user.mkdir()
+    rc = main(_ccs(user, "--explain", "sync_removals"))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "refuses to do quietly" in out
+    assert userconfig.DOCS_URL not in out
+
+
+def test_the_index_uses_no_characters_cmd_exe_cannot_print(tmp_path, capsys,
+                                                           monkeypatch):
+    """Windows cmd.exe defaults to codepage 437. A single-character ellipsis
+    comes out as a replacement glyph -- observed in the first run of this
+    index, where every truncated line ended in one.
+    """
+    monkeypatch.setattr(merge, "_console_attached", _console())
+    monkeypatch.setattr("builtins.input", lambda _p: "n")
+    user = tmp_path / "user"
+    user.mkdir()
+    main(_ccs(user, "--explain"))
+    out = capsys.readouterr().out
+    out.encode("cp437")        # raises UnicodeEncodeError if it cannot print
+    assert "..." in out, "long summaries should be truncated with ASCII dots"
+
+
+# -- _gist, the index's one-line summaries -------------------------------------
+#
+# Every test below exists because a mutation survived the v0.5.12 sweep. `_gist`
+# is a pure function and every assertion about it had been going through the
+# rendered index, where the real explanations happen not to exercise any of its
+# edges. Testing a pure function through its caller's output is how a whole
+# function ends up unconstrained while looking covered.
+
+def test_gist_keeps_a_summary_that_is_exactly_the_width_allowed():
+    """Mutation M7: `<=` became `<`, and a summary of exactly `width`
+    characters was truncated for no reason. Nothing failed, because no real
+    explanation happens to land on the boundary."""
+    assert cli._gist("abcdefghij", 10) == "abcdefghij"
+    assert "..." not in cli._gist("abcdefghij", 10)
+    assert cli._gist("abcdefghijk", 10).endswith("...")
+
+
+def test_gist_trims_to_the_LAST_word_boundary_not_the_first():
+    """Mutation M8: `rindex` became `index`, collapsing every truncated
+    summary to a single word. The index still rendered, still fit, and still
+    looked plausible -- which is exactly why nothing caught it."""
+    got = cli._gist("alpha beta gamma delta", 15)
+    assert got == "alpha beta...", (
+        f"expected as many whole words as fit, got {got!r}")
+
+
+def test_gist_ends_a_sentence_at_a_period_FOLLOWED_BY_A_SPACE():
+    """Mutation M6: `split(". ")` became `split(".")`, so any explanation
+    holding a version number, an abbreviation or a filename was cut at the
+    first period. None of the current eleven contain one -- so the mutant
+    survived on the real table and would have bitten the first setting whose
+    explanation mentioned `ccs-config.json`."""
+    got = cli._gist("Set this to v1.2 before you start. Then read on.", 80)
+    assert "v1.2" in got, f"truncated inside a version number: {got!r}"
+    assert "Then read on" not in got, "it must still stop at the first sentence"
+
+
+def test_gist_handles_a_first_word_longer_than_the_whole_budget():
+    """No mutation for this one -- it is the edge the others made me look at.
+    A single unbreakable token must not produce an empty summary or crash."""
+    got = cli._gist("supercalifragilisticexpialidocious rest", 10)
+    assert got and got.endswith("...")
+
+
+def test_CCS_INTERACTIVE_is_honoured_with_stray_whitespace(tmp_path, capsys,
+                                                           monkeypatch):
+    """Mutation M11 dropped `.strip()` from the environment read and survived.
+
+    Whitespace around an environment variable is not exotic: it is what a
+    shell script writing `CCS_INTERACTIVE="0 "` or a CI system templating a
+    value produces. Without the strip, the opt-out silently stops working and
+    the run stops on a prompt -- the failure this whole branch exists to
+    prevent.
+    """
+    monkeypatch.setattr(merge, "_console_attached", _console())
+    monkeypatch.setattr("builtins.input", _refuse_to_prompt)
+    monkeypatch.setenv("CCS_INTERACTIVE", "  0  ")
+    user = tmp_path / "user"
+    user.mkdir()
+    assert main(_ccs(user, "--explain")) == 0
+
+
+def test_an_empty_setting_name_is_an_ERROR_not_a_fall_through():
+    """Mutation M9 turned `only is not None` into `only`, so an empty setting
+    name skipped the unknown-setting error and quietly showed the index.
+
+    The CLI normalises "" to None before this point, so the mutant is
+    unreachable through argparse today -- but the guard is what makes that
+    normalisation safe to change later, and a guard nothing tests is a guard
+    that gets 'simplified' by the next person to read it.
+    """
+    assert cli._explain_settings("") == cli.EXIT_ERROR
 
 
 def test_explain_a_setting_that_does_not_exist(tmp_path, capsys):

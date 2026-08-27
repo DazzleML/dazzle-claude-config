@@ -13,121 +13,124 @@ directory is Claude Code's and gets swept during upgrades.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
+#: Where the prose lives, inside the installed package. Shipping it as package
+#: DATA rather than only as a web page is the point: `--explain <setting>` must
+#: answer on a VPS over SSH, with no browser, no config file and no network.
+EXPLANATIONS_FILE = "settings-explanations.json"
+
+#: The generated reference `--explain` points at when asked for everything at
+#: once. Generated FROM the file above, so it cannot describe a ccs that never
+#: shipped -- the reason a hand-written page was rejected in the first place.
+DOCS_URL = ("https://github.com/DazzleML/dazzle-claude-config"
+            "/blob/main/docs/configuration.md")
+
+
 @dataclass(frozen=True)
 class Key:
-    """One setting, with everything ccs knows about it in one place.
+    """One setting's BEHAVIOUR -- what it defaults to, where it can be set,
+    and which values are legal.
 
-    `explain` used to be a comment above the entry in DEFAULTS. Comments are
-    invisible to the program, so "what does this key mean?" could only be
-    answered by reading source -- and every proposal for fixing that (a docs
-    page, a generated sidecar, a parallel dict) was a COPY, which drifts. The
-    text was already one block per key; it was a table written as comments.
-    Making it data means `ccs setup update --explain`, `ccs doctor`, and any
-    future generated documentation all read the same words, and a key added
-    without an explanation fails a test instead of shipping unexplained.
+    What it MEANS lives in `EXPLANATIONS_FILE` beside this module and is
+    attached at import, so the prose can be hand-edited and generated from
+    without touching Python. The split is deliberate and one-directional:
+    behaviour never leaves the code. A packaging slip that loses the JSON must
+    leave ccs *unexplained*, never *undefaulted* -- an unexplained setting is
+    an annoyance, a missing default is a machine quietly behaving differently.
     """
     default: object
     env: str
-    explain: str
     choices: frozenset[str] | None = None
+    explain: str = ""  # attached from the packaged JSON; see load_explanations
+
+
+def load_explanations() -> tuple[dict[str, str], str | None]:
+    """Read the packaged explanations. Returns (texts, reason-it-failed).
+
+    Every failure degrades rather than raising, for the reason in `Key`: ccs
+    must still run correctly with no prose at all. `ccs doctor` surfaces the
+    reason, so a packaging slip is visible instead of silently producing an
+    `--explain` that says nothing.
+    """
+    try:
+        from importlib import resources
+        raw = (resources.files("dazzle_claude_config")
+               .joinpath(EXPLANATIONS_FILE).read_text(encoding="utf-8"))
+    except (OSError, ModuleNotFoundError, TypeError) as exc:
+        return {}, f"{EXPLANATIONS_FILE} is not installed ({exc})"
+    try:
+        body = json.loads(raw)
+    except ValueError as exc:
+        return {}, f"{EXPLANATIONS_FILE} is not valid JSON ({exc})"
+    texts = body.get("settings") if isinstance(body, dict) else None
+    if not isinstance(texts, dict):
+        return {}, f"{EXPLANATIONS_FILE} has no 'settings' object"
+    return {k: v for k, v in texts.items() if isinstance(v, str)}, None
+
+
+def explanation_gaps(keys, texts) -> tuple[set[str], set[str]]:
+    """(settings with no explanation, explanations for no setting).
+
+    While the prose was a constructor argument, a setting could not be added
+    without one -- it was a TypeError at import and the program would not
+    start. Prose in a separate file cannot give that, so this is its
+    replacement, and it is a PURE function precisely so the detection can be
+    tested against synthetic input. Mutation L4 is why that distinction
+    matters: proving the current settings happen to be explained is far weaker
+    than proving an unexplained one gets caught.
+    """
+    named = set(keys)
+    explained = {n for n, t in texts.items() if (t or "").strip()}
+    return named - explained, explained - named
+
+
+EXPLANATIONS, EXPLANATIONS_ERROR = load_explanations()
+
+
+def _attach_explanations(raw: dict[str, Key]) -> dict[str, Key]:
+    """Fold the packaged prose onto the behaviour table, so every consumer --
+    `--explain`, `doctor`, the docs generator -- reads one lookup."""
+    return {name: dataclasses.replace(k, explain=EXPLANATIONS.get(name, ""))
+            for name, k in raw.items()}
 
 
 #: Every setting ccs honours. Chosen so a fresh machine behaves safely without
 #: a config file at all: prompt rather than guess, and never spend money
 #: without being asked.
-KEYS: dict[str, Key] = {
+KEYS: dict[str, Key] = _attach_explanations({
     "on_divergence": Key(
         default="prompt", env="CCS_ON_DIVERGENCE",
-        choices=frozenset({"prompt", "skip", "force"}),
-        explain="What to do when a file has diverged two ways. 'prompt' asks; "
-                "'skip' leaves it alone and reports it; 'force' overwrites, "
-                "which is destructive."),
+        choices=frozenset({"prompt", "skip", "force"})),
 
-    "difftool": Key(
-        default=None, env="CCS_DIFFTOOL",
-        explain="The git difftool to force for `ccs diff` and `ccs merge`. "
-                "Unset means resolve it from your git config, falling back to "
-                "scanning for one when the configured default is not on disk."),
+    "difftool": Key(default=None, env="CCS_DIFFTOOL"),
 
-    "ai_merge_command": Key(
-        default=None, env="CCS_AI_MERGE_COMMAND",
-        explain="Shell command for AI-assisted merge; unset disables the "
-                "option entirely. It receives the base, your version and the "
-                "output path as $CCS_BASE, $CCS_OURS and $CCS_OUT. Left unset "
-                "on purpose: AI costs money, so it is opt-in per machine."),
+    "ai_merge_command": Key(default=None, env="CCS_AI_MERGE_COMMAND"),
 
-    "interactive": Key(
-        default=True, env="CCS_INTERACTIVE",
-        explain="Whether ccs may ask you questions. False suppresses every "
-                "prompt and uses on_divergence directly. Also inferred "
-                "automatically when input is not a terminal, so an automated "
-                "run never hangs waiting for an answer nobody can give."),
+    "interactive": Key(default=True, env="CCS_INTERACTIVE"),
 
     "status_detail": Key(
         default="auto", env="CCS_STATUS_DETAIL",
-        choices=frozenset({"auto", "long", "compact"}),
-        explain="How much detail `ccs status` prints. 'auto' shows the "
-                "per-file breakdown until it would exceed status_max_lines, "
-                "then falls back to one line per entry; 'long' always shows "
-                "every file; 'compact' always shows one line per entry."),
+        choices=frozenset({"auto", "long", "compact"})),
 
-    "status_max_lines": Key(
-        default=30, env="CCS_STATUS_MAX_LINES",
-        explain="The line budget 'auto' spends before collapsing to one line "
-                "per entry. Raise it if you would rather always see every "
-                "file; lower it on a small terminal."),
+    "status_max_lines": Key(default=30, env="CCS_STATUS_MAX_LINES"),
 
-    "fetch": Key(
-        default=True, env="CCS_FETCH",
-        explain="Whether `ccs status` contacts the remote before reporting. "
-                "It does, so that 'in sync with origin/main' is a claim about "
-                "the remote rather than about whenever you last fetched. It "
-                "touches remote-tracking refs only -- no branch, index or "
-                "working tree. Turn it off for an air-gapped or metered "
-                "machine; --no-fetch does the same for one run."),
+    "fetch": Key(default=True, env="CCS_FETCH"),
 
-    "fetch_timeout": Key(
-        default=15, env="CCS_FETCH_TIMEOUT",
-        explain="Seconds before a fetch is treated as failed and the pull "
-                "state is reported as unknown. One repo and one remote: 15 is "
-                "generous for a hosted remote and short enough that a dead "
-                "network does not make `status` feel hung."),
+    "fetch_timeout": Key(default=15, env="CCS_FETCH_TIMEOUT"),
 
-    "require_current": Key(
-        default=False, env="CCS_REQUIRE_CURRENT",
-        explain="What happens when your checkout is behind its remote. By "
-                "default apply and collect warn and proceed -- 'install what I "
-                "have here, now' is a legitimate intent and nothing is lost. "
-                "True turns that warning into a refusal, for people who want "
-                "the pull-first loop enforced. --require-current does it for "
-                "one run."),
+    "require_current": Key(default=False, env="CCS_REQUIRE_CURRENT"),
 
-    "auto_pull": Key(
-        default=False, env="CCS_AUTO_PULL",
-        explain="Whether `ccs status` fast-forwards your checkout before "
-                "reporting, when the fetch finds it behind and the move is "
-                "safe. Strictly fast-forward only: a diverged branch or a file "
-                "in the way is reported, never merged, rebased or stashed. "
-                "status only -- apply and collect keep their warning, see "
-                "require_current. --pull / --no-pull per run."),
+    "auto_pull": Key(default=False, env="CCS_AUTO_PULL"),
 
     "sync_removals": Key(
         default="untouched", env="CCS_SYNC_REMOVALS",
-        choices=frozenset({"untouched", "all", "never"}),
-        explain="What to do about a file the payload RETIRED that this machine "
-                "still carries. 'untouched' moves it into the backup directory "
-                "only when your copy still matches a committed version, i.e. "
-                "holds nothing of yours; a copy you edited is reported and "
-                "kept instead, because staging away work the payload never had "
-                "is the one thing this tool refuses to do quietly. 'all' "
-                "stages every retired file; 'never' only reports. Nothing is "
-                "ever deleted in place."),
-}
+        choices=frozenset({"untouched", "all", "never"})),
+})
 
 #: Derived from KEYS so there is exactly one place per setting. Kept as
 #: module-level names because seven call sites in this file read them, and

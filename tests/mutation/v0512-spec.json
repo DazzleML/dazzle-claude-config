@@ -1,0 +1,99 @@
+{
+  "_note": "v0.5.12 -- explanations as packaged data. Generated fresh-context (mode 1): a subagent given the source text and the generator contract only, zero tools, no sight of the test suite.",
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "-x",
+    "tests/test_explanations_ship.py",
+    "tests/test_config_keys_table.py",
+    "tests/test_setup_update.py"
+  ],
+  "mutations": [
+    {
+      "id": "M1",
+      "file": "dazzle_claude_config/userconfig.py",
+      "original": "    texts = body.get(\"settings\") if isinstance(body, dict) else None\n    if not isinstance(texts, dict):",
+      "mutated": "    texts = body.get(\"settings\") if isinstance(body, dict) else None\n    if texts is None:",
+      "note": "Degrade-not-raise guard weakened: a non-dict 'settings' (a list or string) slips past and reaches the dict comprehension instead of returning the packaging-slip reason."
+    },
+    {
+      "id": "M2",
+      "file": "dazzle_claude_config/userconfig.py",
+      "original": "    return {k: v for k, v in texts.items() if isinstance(v, str)}, None",
+      "mutated": "    return {k: v for k, v in texts.items() if v}, None",
+      "note": "None-vs-truthiness slip: filters on truthiness rather than string type, so non-string prose values are admitted into the explanation table."
+    },
+    {
+      "id": "M3",
+      "file": "dazzle_claude_config/userconfig.py",
+      "original": "    explained = {n for n, t in texts.items() if (t or \"\").strip()}",
+      "mutated": "    explained = {n for n, t in texts.items() if (t or \"\")}",
+      "note": "Dropped normalization: a whitespace-only explanation counts as explained, so the replacement for the old TypeError-at-import check stops catching blank prose."
+    },
+    {
+      "id": "M4",
+      "file": "dazzle_claude_config/userconfig.py",
+      "original": "    return named - explained, explained - named",
+      "mutated": "    return explained - named, named - explained",
+      "note": "Swapped return values: the documented (unexplained, orphan) tuple order is reversed, so callers report each gap as the other kind."
+    },
+    {
+      "id": "M5",
+      "file": "dazzle_claude_config/userconfig.py",
+      "original": "    return {name: dataclasses.replace(k, explain=EXPLANATIONS.get(name, \"\"))\n            for name, k in raw.items()}",
+      "mutated": "    return {name: dataclasses.replace(k, explain=EXPLANATIONS.get(name, name))\n            for name, k in raw.items()}",
+      "note": "Missing-prose fallback becomes the setting name instead of empty, so every consumer believes an unexplained setting is explained and the 'explanation unavailable' path never fires."
+    },
+    {
+      "id": "M6",
+      "file": "dazzle_claude_config/cli.py",
+      "original": "    first = text.split(\". \")[0].rstrip(\".\")",
+      "mutated": "    first = text.split(\".\")[0].rstrip(\".\")",
+      "note": "Sentence split loses the space requirement, so an explanation containing an abbreviation, a version number or a filename is truncated at the first period."
+    },
+    {
+      "id": "M7",
+      "file": "dazzle_claude_config/cli.py",
+      "original": "    if len(first) <= width:\n        return first\n    cut = first[:max(1, width - 3)]",
+      "mutated": "    if len(first) < width:\n        return first\n    cut = first[:max(1, width - 3)]",
+      "note": "Boundary flip: a gist exactly `width` characters long is needlessly truncated instead of printed whole."
+    },
+    {
+      "id": "M8",
+      "file": "dazzle_claude_config/cli.py",
+      "original": "    if \" \" in cut:  # trim to a word boundary, not mid-word\n        cut = cut[:cut.rindex(\" \")]",
+      "mutated": "    if \" \" in cut:  # trim to a word boundary, not mid-word\n        cut = cut[:cut.index(\" \")]",
+      "note": "Word-boundary trim uses the first space rather than the last, collapsing the gist to a single word."
+    },
+    {
+      "id": "M9",
+      "file": "dazzle_claude_config/cli.py",
+      "original": "    if only is not None and only not in keys:",
+      "mutated": "    if only and only not in keys:",
+      "note": "None-vs-truthiness: an empty-string setting name skips the unknown-setting error and falls through to the index instead of exiting EXIT_ERROR."
+    },
+    {
+      "id": "M10",
+      "file": "dazzle_claude_config/cli.py",
+      "original": "    if not merge._console_attached(sys.stdout):\n        _print_all()\n        return EXIT_CLEAN",
+      "mutated": "    if merge._console_attached(sys.stdout):\n        _print_all()\n        return EXIT_CLEAN",
+      "note": "Console detection inverted: redirected or piped output gets the abbreviated index while a terminal gets the full dump -- exactly backwards from the documented policy."
+    },
+    {
+      "id": "M11",
+      "file": "dazzle_claude_config/cli.py",
+      "original": "    if os.environ.get(\"CCS_INTERACTIVE\", \"\").strip().lower() in \\\n            (\"0\", \"false\", \"no\", \"off\"):",
+      "mutated": "    if os.environ.get(\"CCS_INTERACTIVE\", \"\").lower() in \\\n            (\"0\", \"false\", \"no\", \"off\"):",
+      "note": "Dropped .strip() on the opt-out env var, so a value with surrounding whitespace no longer suppresses the prompt."
+    },
+    {
+      "id": "M12",
+      "file": "dazzle_claude_config/cli.py",
+      "original": "    if not merge._console_attached(sys.stdin):\n        return EXIT_CLEAN  # can show, cannot ask",
+      "mutated": "    if not merge._console_attached(sys.stdout):\n        return EXIT_CLEAN  # can show, cannot ask",
+      "note": "Wrong stream checked before prompting: stdin availability is never verified, so input() is called with no console attached to read from."
+    }
+  ]
+}

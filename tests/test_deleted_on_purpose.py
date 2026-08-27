@@ -90,6 +90,66 @@ def test_the_notice_NAMES_the_files_it_means(tmp_path, capsys):
         "the named file must appear under the notice, not only above it"
 
 
+def test_the_notice_reads_as_ENGLISH_when_it_names_exactly_one_file(
+        tmp_path, capsys):
+    """The whole sentence agrees with the count, not just the first line.
+
+    Found on a real run installing one new file: "1 file above **was** not in
+    your live config ... if you removed **any of those** on purpose". The
+    count and its verb had been made singular; the sentence underneath had
+    not. This is the third time in this release the same shape appeared --
+    a plural corrected on the line being looked at and left wrong on the next
+    -- which is why the fix greps the wording rather than the line.
+    """
+    w = _world(tmp_path)
+    main(_ccs(w, "apply"))
+    out = capsys.readouterr().out
+    assert "1 file above was not" in out, out
+    assert "if you removed it on purpose" in out, (
+        "with exactly one file the sentence must say 'it', not 'any of "
+        f"those' -- got:\n{out}")
+    assert "any of those" not in out
+
+
+def test_the_notice_reads_as_ENGLISH_when_it_names_several(tmp_path, capsys):
+    """The other half of the same fix. A test that only pinned the singular
+    would let the plural regress, which is precisely how the half-fix this
+    replaces came about."""
+    w = _world(tmp_path)
+    (w["co"] / "dotclaude" / "skills" / "second.md").write_bytes(b"also new\n")
+    _git(w["co"], "add", "-A")
+    _git(w["co"], "commit", "-qm", "v3")
+    main(_ccs(w, "apply"))
+    out = capsys.readouterr().out
+    assert "2 files above were not" in out, out
+    assert "if you removed any of those on purpose" in out, out
+
+
+def test_every_verdict_label_starts_the_filename_in_the_SAME_column(
+        tmp_path, capsys):
+    """Status pads `live only`, `checkout` and the per-file verdicts to one
+    width, so the filenames form a column the eye can run down.
+
+    Found on a real run holding both kinds at once: `checkout` and
+    `live only` were nine-character literals while the modified lines pad to
+    ten, so one filename sat a single column left of the others. Nothing was
+    wrong with the information -- it just stopped being a column.
+    """
+    w = _world(tmp_path)
+    # The defect needs BOTH kinds in one entry: unwanted.md exists only in the
+    # checkout, and a.md must actually differ, so give live its own version.
+    (w["live"] / "skills" / "a.md").write_bytes(b"keep me, but edited here\n")
+    main(_ccs(w, "status", "--long"))
+    out = capsys.readouterr().out
+    lines = [ln for ln in out.splitlines()
+             if ("unwanted.md" in ln or "a.md" in ln) and ln.startswith("      ")]
+    assert len(lines) >= 2, f"expected both kinds of line, got:\n{out}"
+    starts = {ln.index(ln.split()[1]) for ln in lines}
+    assert len(starts) == 1, (
+        f"filenames start in different columns {sorted(starts)} -- the "
+        f"verdict labels are padded to different widths:\n" + "\n".join(lines))
+
+
 def test_an_ordinary_modification_does_not_trigger_the_notice(tmp_path, capsys):
     """The notice is for ABSENT files only; a normal update must stay quiet."""
     w = _world(tmp_path)

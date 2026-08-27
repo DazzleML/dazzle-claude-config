@@ -4,6 +4,21 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.12] - 2026-08-27
+
+### Added
+- **[A page listing every setting](docs/configuration.md).** It is generated from the same words `ccs setup update --explain` prints, so it cannot describe a version of ccs that never shipped -- which is the failure that made a hand-written page not worth having. A test regenerates it and fails if the committed copy has fallen behind, so the two cannot disagree.
+- `ccs doctor` now reports whether the settings explanations are readable, and names any that are missing. This check is unlike the rest of doctor's: everything else it looks at can only break through something you did, while this can break through a packaging mistake that is invisible in a source tree and appears only on a machine somebody installed ccs on.
+
+### Changed
+- **The explanations moved out of the code and into a file that can be edited on its own.** They now live in `settings-explanations.json` inside ccs itself, so the wording can be improved without touching Python, the settings page can be generated from it, and a translation is a sibling file. They still ship inside the package, so `ccs setup update --explain <setting>` answers on a headless box over SSH with no browser and no network, exactly as before. What a setting *does* -- its default, its valid values, the environment variable that sets it -- deliberately stayed in the code: losing the explanations file must leave ccs unexplained, never leave it without its defaults.
+- **`ccs setup update --explain` with no setting named is now a short index rather than every word at once.** It lists each setting with its default and a one-line summary, names the page above, and offers to print everything in your terminal. The previous behaviour printed about eighty lines, which scrolled its own beginning off the screen and left you nothing to do about it. Naming a setting is unchanged, and that is the form that matters: `ccs setup update --explain sync_removals` still prints it in full, immediately.
+- Redirecting or piping `--explain` gives you everything and never stops to ask a question. Sending output to a file or a pager is a request for the content, and nothing scrolls away in a file. This also fixes a real hang: the previous test for "is a person watching this" answered yes for a redirected command on Windows, so a piped run could stop on a prompt nothing could see or answer.
+
+### Fixed
+- Truncated summaries end in three ordinary periods rather than a single-character ellipsis, which the Windows console draws as a placeholder box on its default codepage.
+- `CCS_INTERACTIVE` is honoured when its value has spaces around it, which is what a shell script or a build system templating the value tends to produce.
+
 ## [0.5.11] - 2026-08-27
 
 ### Added
@@ -326,7 +341,7 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.11...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.12...HEAD
 [0.5.8]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.5...v0.5.6

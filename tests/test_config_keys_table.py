@@ -100,21 +100,55 @@ def test_an_explanation_that_lists_choices_lists_all_of_them():
                 f"{name}: explanation quotes {quoted} of {len(k.choices)} choices")
 
 
-def test_explain_is_a_REQUIRED_field_not_an_optional_one():
-    """The anti-drift promise is structural, not a habit.
+def test_an_unexplained_setting_is_DETECTED_not_merely_absent_today():
+    """The anti-drift promise is a check that fires, not a habit.
 
-    Caught by mutation L4: giving `explain` a default of "" left every current
-    key explained, so the "every key explains itself" test still passed -- but
-    the NEXT key could be added with no explanation and nothing would notice.
-    Proving the keys are explained is weaker than proving they must be.
+    This replaces an earlier test that asserted `Key.explain` had no default,
+    so a Key could not be constructed without one -- a TypeError at import,
+    the strongest form available. Moving the prose into a packaged JSON file
+    (so it can be hand-edited, generated from, and localised) gives up that
+    form: the constructor no longer sees the words. The guarantee has to move
+    with it, and this is where it went.
+
+    What is preserved is the LESSON, which is mutation L4's: proving the
+    current settings happen to be explained is much weaker than proving an
+    unexplained one gets CAUGHT. So the check runs against synthetic input
+    with a deliberate hole in it, not against the real table -- the real
+    table passing tells you nothing about the next setting somebody adds.
     """
-    import dataclasses
-    explain = next(f for f in dataclasses.fields(userconfig.Key)
-                   if f.name == "explain")
-    assert explain.default is dataclasses.MISSING, (
-        "Key.explain must have no default -- an optional explanation lets a "
-        "setting ship unexplained, which is what this table exists to prevent")
-    assert explain.default_factory is dataclasses.MISSING
+    keys = {"real": object(), "undocumented": object()}
+    texts = {"real": "This one says something."}
+
+    missing, orphan = userconfig.explanation_gaps(keys, texts)
+    assert missing == {"undocumented"}, (
+        "a setting with no entry in the explanations file must be reported")
+    assert orphan == set()
+
+
+def test_a_whitespace_only_explanation_counts_as_missing():
+    """Otherwise the file can satisfy the check while saying nothing, which is
+    the same failure wearing a different hat."""
+    missing, _ = userconfig.explanation_gaps({"k": object()}, {"k": "   \n "})
+    assert missing == {"k"}
+
+
+def test_an_explanation_for_no_setting_is_reported_too():
+    """The other direction. A stale entry is usually a setting that was
+    renamed or removed, and silently ignoring it means the file accumulates
+    prose describing a ccs that no longer exists."""
+    _, orphan = userconfig.explanation_gaps({"k": object()},
+                                            {"k": "text", "gone": "old text"})
+    assert orphan == {"gone"}
+
+
+def test_the_shipped_table_has_no_gaps_in_either_direction():
+    """The population check. Weaker than the three above on its own -- that is
+    exactly L4's point -- but it is what fails when somebody adds a setting to
+    userconfig.py and forgets the JSON, which is the realistic mistake."""
+    missing, orphan = userconfig.explanation_gaps(
+        userconfig.KEYS, userconfig.EXPLANATIONS)
+    assert not missing, f"settings with no explanation: {sorted(missing)}"
+    assert not orphan, f"explanations naming no setting: {sorted(orphan)}"
 
 
 def test_a_choice_named_in_the_explanation_is_a_real_choice():

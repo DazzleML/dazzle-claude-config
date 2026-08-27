@@ -51,6 +51,14 @@ version = {attr = "dazzle_claude_config._version.PIP_VERSION"}
 where = ["."]
 include = ["dazzle_claude_config", "dazzle_claude_config.*"]
 
+# The settings explanations are DATA, not code, so they need saying here --
+# `packages.find` collects modules only. Without this line `--explain` works
+# in a checkout and comes up empty after `pip install`, which is the worst
+# shape a bug can have: invisible where you develop, visible only on the box
+# you cannot easily debug. tests/test_explanations_ship.py fails if it drops.
+[tool.setuptools.package-data]
+dazzle_claude_config = ["settings-explanations.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"

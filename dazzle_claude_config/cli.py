@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -350,31 +351,129 @@ def _wrap(text: str, width: int, indent: str) -> list[str]:
                          subsequent_indent=indent) or [indent.rstrip()]
 
 
-def _explain_settings(only: str | None) -> int:
-    """`ccs setup update --explain [KEY]` -- what a setting means, and where
-    its value would come from.
+def _gist(text: str, width: int) -> str:
+    """The first sentence of an explanation, for the index. Enough to tell a
+    reader whether this is the setting they are looking for; the rest is one
+    `--explain <name>` away.
 
-    The text is the same string the settings table holds, so this cannot drift
-    from the config it describes: there is no second copy to fall behind.
+    ASCII "..." on purpose, never the single-character ellipsis: this prints
+    to cmd.exe on codepage 437, where a non-ASCII byte comes out as a
+    replacement glyph. Caught here by reading the output rather than the code.
+    """
+    first = text.split(". ")[0].rstrip(".")
+    if len(first) <= width:
+        return first
+    cut = first[:max(1, width - 3)]
+    if " " in cut:  # trim to a word boundary, not mid-word
+        cut = cut[:cut.rindex(" ")]
+    return cut + "..."
+
+
+def _explain_one(name: str, k) -> None:
+    """Everything ccs knows about one setting. This is the form that matters:
+    someone has hit an unfamiliar key in their config and wants THAT answer,
+    on whatever machine they are on, without a browser."""
+    print(c("bold_cyan", name) +
+          c("dim", f"  (default: {json.dumps(k.default)})"))
+    if k.choices:
+        print(c("dim", "  one of: ") + ", ".join(sorted(k.choices)))
+    if k.explain:
+        for line in _wrap(k.explain, 76, "  "):
+            print(line)
+    else:
+        # Only reachable if the packaged JSON went missing; `ccs doctor` says
+        # so plainly. Better a pointer than a blank space where words were.
+        print(c("yellow", "  (explanation unavailable -- see ")
+              + userconfig.DOCS_URL + c("yellow", ")"))
+    print(c("dim", f"  set it in ~/claude/ccs-config.json, or per shell "
+                   f"with {k.env}"))
+
+
+def _explain_index(keys) -> None:
+    """Name, default and first sentence for every setting, plus where the full
+    text lives. Replaces an 80-line dump that was a scroll rather than a
+    reference, and makes the per-setting form discoverable -- you cannot ask
+    for `--explain sync_removals` if nothing ever told you it exists."""
+    nw = max(len(n) for n in keys)
+    dw = max(len(json.dumps(k.default)) for k in keys.values())
+    print(c("bold", f"{len(keys)} settings.") +
+          c("dim", "  Full reference:"))
+    print("  " + userconfig.DOCS_URL)
+    print()
+    for name, k in keys.items():
+        default = json.dumps(k.default)
+        print("  " + c("cyan", name.ljust(nw)) + "  " +
+              c("dim", default.ljust(dw)) + "  " +
+              _gist(k.explain, max(20, 74 - nw - dw)))
+    print()
+    print(c("dim", "  ccs setup update --explain <name>") +
+          "   the full text for one setting, here")
+
+
+def _explain_settings(only: str | None) -> int:
+    """`ccs setup update --explain [SETTING]` -- what a setting means, and
+    where its value would come from.
+
+    The words ship inside the package, so this answers offline, with no config
+    file and no network -- which is the whole reason they are packaged data
+    rather than only a web page. The generated docs page reads the same file,
+    so the two cannot disagree.
+
+    Asked about ONE setting, it prints that one and exits. Asked for all of
+    them, what to do depends on who is asking:
+
+      * Not a terminal -- redirected, piped, in a script or a pager -- is an
+        explicit request for the content, and nothing scrolls away in a file.
+        Print everything.
+      * At a terminal, all of it is 80 lines: a scroll, not a reference. Show
+        the index, name the page, and offer the rest.
+
+    "Is this a terminal" uses merge._console_attached, NOT isatty(). On
+    Windows, Git Bash maps /dev/null to NUL, which is a character device, so
+    isatty() answers True under the exact redirection this needs to detect --
+    measured here, where a piped run printed the index and then sat on a
+    prompt nobody could see. That helper already existed for the same reason.
     """
     keys = userconfig.KEYS
     if only is not None and only not in keys:
         print(c("bold_red", f"no such setting: {only}"))
         print(c("dim", "  known settings: " + ", ".join(sorted(keys))))
         return EXIT_ERROR
-    chosen = [only] if only else list(keys)
-    for i, name in enumerate(chosen):
-        k = keys[name]
-        if i:
-            print()
-        print(c("bold_cyan", name) +
-              c("dim", f"  (default: {json.dumps(k.default)})"))
-        if k.choices:
-            print(c("dim", "  one of: ") + ", ".join(sorted(k.choices)))
-        for line in _wrap(k.explain, 76, "  "):
-            print(line)
-        print(c("dim", f"  set it in ~/claude/ccs-config.json, or per shell "
-                       f"with {k.env}"))
+
+    if only:
+        _explain_one(only, keys[only])
+        return EXIT_CLEAN
+
+    def _print_all() -> None:
+        for i, (name, k) in enumerate(keys.items()):
+            if i:
+                print()
+            _explain_one(name, k)
+
+    if not merge._console_attached(sys.stdout):
+        _print_all()
+        return EXIT_CLEAN
+
+    _explain_index(keys)
+
+    # CCS_INTERACTIVE is honoured from the environment alone. Reading the
+    # config file to decide would cost --explain the property that makes it
+    # useful on a new machine: it needs no config file to answer.
+    if os.environ.get("CCS_INTERACTIVE", "").strip().lower() in \
+            ("0", "false", "no", "off"):
+        return EXIT_CLEAN
+    if not merge._console_attached(sys.stdin):
+        return EXIT_CLEAN  # can show, cannot ask
+
+    print()
+    try:
+        answer = input(f"Print all {len(keys)} in full here? [y/N] ")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return EXIT_CLEAN
+    if answer.strip().lower() in ("y", "yes"):
+        print()
+        _print_all()
     return EXIT_CLEAN
 
 
@@ -589,6 +688,28 @@ def _doctor(args) -> int:
             ok(f"user config {cfg_path.name}")
         except ValueError as e:
             warn(f"{cfg_path.name}: not valid JSON ({e}) -- defaults in effect")
+    # settings explanations
+    #
+    # These are packaged DATA, so unlike everything else in this file they can
+    # go missing through a packaging mistake rather than a user one -- and the
+    # failure is invisible where the work happens: in a checkout the file is on
+    # disk and `--explain` works, while the installed copy answers with
+    # nothing. Nobody would think to look, so doctor looks.
+    if userconfig.EXPLANATIONS_ERROR:
+        warn(f"{userconfig.EXPLANATIONS_ERROR} -- `ccs setup update --explain` "
+             f"has no words to print; they are at {userconfig.DOCS_URL}")
+    else:
+        _unexplained, _orphaned = userconfig.explanation_gaps(
+            userconfig.KEYS, userconfig.EXPLANATIONS)
+        if _unexplained:
+            warn(f"no explanation for: {', '.join(sorted(_unexplained))} -- "
+                 f"`--explain` will be blank for those settings")
+        elif _orphaned:
+            warn(f"explanations naming no setting: "
+                 f"{', '.join(sorted(_orphaned))} -- probably renamed or "
+                 f"removed; harmless, but the file is describing an older ccs")
+        else:
+            ok(f"settings explained ({len(userconfig.KEYS)})")
     # manifest + seeds
     manifest = None
     if co.is_dir():
@@ -1119,12 +1240,17 @@ def _print_entry_files(d, kinds=None) -> None:
         return
     width = min(max(len(n) for n in names), 52)
 
+    # All three loops pad the verdict to the SAME width. They did not, and a
+    # real run showed why it matters: `checkout` and `live only` were literals
+    # nine characters wide while the modified lines below pad to ten, so the
+    # filenames in one entry started one column apart and the eye lost the
+    # column it was scanning down.
     for rel in sorted(d.live_only):
         if rel:
-            print(f"      {c('yellow', 'live only')}  {rel}")
+            print(f"      {c('yellow', 'live only'.ljust(10))}  {rel}")
     for rel in sorted(d.repo_only):
         if rel:
-            print(f"      {c('cyan', 'checkout ')}  {rel}")
+            print(f"      {c('cyan', 'checkout'.ljust(10))}  {rel}")
     for rel in sorted(d.modified):
         if not rel:
             continue
@@ -2225,7 +2351,14 @@ def main(argv: list[str] | None = None) -> int:
                                   "live config before this run:"))
                 for rel in r.restored:
                     print(f"    {c('cyan', rel)}")
-                print(c("dim", "  if you removed any of those on purpose, "
+                # The whole sentence agrees with n, not just the count above
+                # it. This is the third time in this release a plural was
+                # fixed on one line and left wrong on the next: the count and
+                # its verb were corrected here and "any of those" was not, so
+                # a single-file run read "1 file above was not ... if you
+                # removed any of THOSE". Grep the wording, not the line.
+                subject = "it" if n == 1 else "any of those"
+                print(c("dim", f"  if you removed {subject} on purpose, "
                                "`ccs apply --keep-deleted <path>` records that "
                                "and stops re-installing it"))
             # Same dry-run honesty as r.copied above: a message that claims
