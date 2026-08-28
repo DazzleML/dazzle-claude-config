@@ -64,3 +64,14 @@ git hash-object (first 12). Only separated-generation runs (modes 1-2) write her
   same set on the next two lines and nothing downstream distinguishes them,
   so no input can separate the two spellings. Predicted equivalent in the
   spec before the run rather than triaged afterwards. (2026-08-26.)
+
+## dazzle_claude_config/cli.py @ 0f9d159143e3
+
+- `if plan.exists and plan.unknown:` -> `if plan.exists or plan.unknown:`
+  -- **equivalent** (2026-08-28, generation mode 1). `plan_config` returns
+  `unknown=[]` for a file that does not exist, so the two forms cannot differ
+  given its contract. The `plan.exists` half is a guard documenting that
+  contract rather than dead code, and removing it would make the doctor
+  section depend on an invariant stated nowhere. Verified by calling
+  `plan_config` on an empty directory: `exists=False, unknown=[]`.
+  Re-triage if `plan_config` ever reports unknown keys for an absent file.

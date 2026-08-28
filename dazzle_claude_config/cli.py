@@ -506,7 +506,7 @@ def _setup_update(args) -> int:
         # Never write over a file we cannot parse: it may hold settings the
         # user cares about, and rewriting it would destroy them to fix a typo.
         print(c("bold_red", "cannot update") + f" {plan.path}")
-        print(c("dim", f"  it does not parse: {plan.unreadable}"))
+        print(c("dim", f"  {plan.unreadable_reason}"))
         print(c("dim", "  fix the JSON by hand, or move it aside and re-run "
                        "to get a fresh one"), file=sys.stderr)
         return EXIT_ERROR
@@ -548,7 +548,7 @@ def _setup_update(args) -> int:
 
     userconfig.apply_config_plan(plan)
     n = len(plan.missing)
-    setting = f"{n} setting{'' if n == 1 else 's'}"
+    setting = render.n_settings(n)
     if plan.exists:
         tail = f"-- {setting} added at their defaults; nothing you had set " \
                "was changed"
@@ -679,15 +679,44 @@ def _doctor(args) -> int:
         if not box.errors:
             tags = ", ".join(sorted(box.tags)) or "none"
             ok(f"box {box.name or '(unnamed)'} (tags: {tags})")
-    # user config
-    cfg_path = userconfig.config_path(user_claude)
-    if cfg_path.exists():
-        try:
-            import json as _json
-            _json.loads(cfg_path.read_text(encoding="utf-8-sig"))
-            ok(f"user config {cfg_path.name}")
-        except ValueError as e:
-            warn(f"{cfg_path.name}: not valid JSON ({e}) -- defaults in effect")
+    # user config (#32)
+    #
+    # Reads the SAME plan `ccs setup update` acts on, so doctor cannot report
+    # a state the verb would then disagree with. Reporting only "is it valid
+    # JSON?" was the gap: a file can parse perfectly and still be missing five
+    # settings this version knows -- which is the whole reason #32 exists, and
+    # which nothing told anyone about.
+    plan = userconfig.plan_config(user_claude)
+    if not plan.exists:
+        # OK, not a warning. Running with no config file is the designed
+        # state and behaves safely -- flagging every fresh machine yellow for
+        # doing nothing wrong is the kind of noise that teaches people to
+        # ignore doctor. It is still worth SAYING, because "safe" and
+        # "visible" are different things and #32 is about the second.
+        ok(f"no config file yet -- built-in defaults in effect; "
+           f"`ccs setup update` writes them to {plan.path.name} so you can "
+           f"see and change them")
+    elif plan.unreadable:
+        warn(f"{plan.path.name}: {plan.unreadable_reason} -- built-in "
+             f"defaults in effect. ccs will not write over a file it cannot "
+             f"parse, so fix it by hand or move it aside")
+    elif plan.missing:
+        # NAME them. A count is not actionable, and the point of the check is
+        # that a setting can govern this machine without appearing in the
+        # file you would open to find out why.
+        warn(f"{plan.path.name} predates {render.n_settings(len(plan.missing))} "
+             f"this version knows: {', '.join(sorted(plan.missing))} -- "
+             f"they are in effect at their defaults; "
+             f"`ccs setup update` adds them without changing anything you set")
+    else:
+        ok(f"user config {plan.path.name} "
+           f"({render.n_settings(len(userconfig.KEYS))}, none missing)")
+    if plan.exists and plan.unknown:
+        # Not a failure. It usually means a NEWER ccs wrote this file, and
+        # removing the key would throw away a setting that version wants back.
+        warn(f"{plan.path.name} holds {render.n_settings(len(plan.unknown))} "
+             f"this version does not know: {', '.join(plan.unknown)} -- "
+             f"left alone; a newer ccs probably wrote them")
     # settings explanations
     #
     # These are packaged DATA, so unlike everything else in this file they can
@@ -1503,26 +1532,31 @@ def _print_file_diff(all_diffs, wanted: str, manifest=None, box=None) -> int:
 
 
 def _remote_state(repo, cfg, args):
-    """Fetch (unless disabled) and report (fetched, detail, behind).
+    """Fetch (unless disabled) and report (fetched, detail, behind, ahead).
 
     fetched: True  -- a fetch succeeded this run; the branch line is current
              None  -- skipped (--no-fetch / fetch: false / no upstream)
              False -- failed; `detail` carries git's first stderr line
     behind:  commits the upstream has that HEAD lacks, per the tracking ref
              as of now (after the fetch, if one ran); None without an upstream.
+    ahead:   commits HEAD has that the upstream lacks -- work that exists on
+             this machine and nowhere else.
 
     One fetch per process. Every verb that wants to know whether a `git pull`
     is due goes through here, so `status` and the verbs cannot disagree about
     what "behind" means -- the same rule as sharing infer_base for attribution.
+
+    `ahead` used to be computed here and dropped on the floor, so the status
+    summary could say "clean" while a commit existed on exactly one machine.
     """
     if repo is None:
-        return None, "", None
+        return None, "", None, None
     want = bool((cfg or {}).get("fetch", True)) and not getattr(args, "no_fetch", False)
     fetched, detail = (None, "")
     if want:
         fetched, detail = repo.fetch(timeout=int((cfg or {}).get("fetch_timeout", 15)))
-    _ahead, behind = repo.ahead_behind()
-    return fetched, detail, behind
+    ahead, behind = repo.ahead_behind()
+    return fetched, detail, behind, ahead
 
 
 def _supplied_base(args) -> tuple[bytes | None, str]:
@@ -1978,13 +2012,39 @@ def _print_status(checkout, repo, roots, all_diffs, diffs, cfg=None,
 
     print()
     behind = remote[2] if len(remote) > 2 else None
-    if not diffs and behind:
+    ahead = remote[3] if len(remote) > 3 else None
+    if not diffs and behind and ahead:
+        # Diverged. The behind branch below recommends `--pull`, which
+        # fast-forwards ONLY and refuses once both sides have moved -- so
+        # falling through to it would send the reader to a command that
+        # cannot work here.
+        up = repo.upstream() if repo is not None else "upstream"
+        print(c("bold_yellow", "status: live matches the checkout") +
+              f" -- but the checkout and {up} have diverged "
+              f"({ahead} here, {behind} there); resolve it in the checkout "
+              + c("bold", "(ccs git ...)")
+              + c("dim", " -- a fast-forward cannot help once both sides have moved"))
+    elif not diffs and behind:
         up = repo.upstream() if repo is not None else "upstream"
         print(c("bold_yellow", "status: live matches the checkout") +
               f" -- but the checkout is {behind} behind {up}; "
               + c("bold", "ccs status --pull")
               + " fast-forwards and re-checks in one step "
               + c("dim", '(or set "auto_pull": true and never think about it)'))
+    elif not diffs and ahead:
+        # This summary already refused to say "clean" while the checkout was
+        # BEHIND, and said it happily while the checkout was AHEAD. Ahead is
+        # the worse of the two to stay quiet about: behind means you will get
+        # it on the next pull, ahead means the work exists on exactly one
+        # machine and a dead disk takes it with it. Same principle, applied
+        # in the direction it was missing.
+        up = repo.upstream() if repo is not None else "upstream"
+        commits = "commit" if ahead == 1 else "commits"
+        is_are = "is" if ahead == 1 else "are"
+        print(c("bold_yellow", "status: live matches the checkout") +
+              f" -- but {ahead} {commits} here {is_are} not on {up} yet; "
+              + c("bold", "ccs git push")
+              + " shares it with your other machines")
     elif not diffs:
         # "Everything ccs SYNCS matches" is the honest claim (issue #27):
         # seeded files are the box's own and are not compared, and saying
@@ -2102,10 +2162,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "seed":
             args._box_tags = box.tags
             return _seed_verb(args, manifest, checkout, roots, repo)
-        fetched, fetch_detail, behind = (render.UNSPECIFIED, "", None)
+        fetched, fetch_detail, behind, ahead = (render.UNSPECIFIED, "", None, None)
         pulled: tuple[int, bool, str] | None = None
         if args.verb in ("status", "collect", "apply"):
-            fetched, fetch_detail, behind = _remote_state(repo, cfg, args)
+            fetched, fetch_detail, behind, ahead = _remote_state(repo, cfg, args)
 
         # AUTO-PULL (status only, opt-in). The pull runs BEFORE the file
         # comparison below, so the drift table describes post-pull reality
@@ -2228,9 +2288,20 @@ def main(argv: list[str] | None = None) -> int:
             for rel in r.missing_live:
                 print(f"{c('dim', 'in the checkout but not live (left alone):')} {rel}")
             for rel in r.git_ignored:
+                # Both halves, because the first alone reads as "this file is
+                # inert" and it is not. `apply` copies from the checkout's
+                # WORKING TREE, not from git, so an ignored-but-not-denied
+                # file is installed on this machine every run while never
+                # reaching any other -- a sync loop version control cannot
+                # see. Someone reading only "never commits" concludes nothing
+                # is happening; something is, just not the thing they wanted.
                 print(c("bold_red", "ERROR") + f": copied but IGNORED by git: {rel} "
-                      + c("dim", "-- it would silently never commit; check "
-                                 ".gitignore and .git/info/exclude"))
+                      + c("dim", "-- it will never commit, so no other machine "
+                                 "ever gets it; but apply reads the working "
+                                 "tree, so THIS machine keeps re-installing it. "
+                                 "Check .gitignore and .git/info/exclude, or "
+                                 "add it to the manifest's deny list if it is "
+                                 "meant to stay local."))
             for path, reason in r.failed:
                 print(c("bold_red", "FAILED") + f" ({reason}): {path}")
             for m in r.mismatched:
@@ -2375,12 +2446,28 @@ def main(argv: list[str] | None = None) -> int:
             for rel in r.seeded:
                 verb = "would seed" if args.dry_run else "seeded"
                 print(f"{c('green', verb)} {rel} {c('dim', '-- was absent locally')}")
+            edited_away = set(r.removals_staged_edited)
             for rel in r.removals_staged:
                 # Name the REASON, not the mechanism: "staged to backup" says
                 # what ccs did; the user needs to know why their file went.
-                print(f"{c('yellow', 'removed')}: {rel} "
-                      + c("dim", "-- retired upstream, your copy was "
-                                 f"unmodified; backed up to {r.backup_dir}"))
+                #
+                # And the reason is not the same in both cases. This line
+                # used to say "your copy was unmodified" for every staged
+                # file, including one staged BECAUSE sync_removals is "all"
+                # while holding the user's own edits. The file was backed up
+                # byte-for-byte either way, so nothing was lost -- but a
+                # person whose edited file vanished had no way to learn from
+                # this line that their edit had even been there.
+                if rel in edited_away:
+                    print(f"{c('yellow', 'removed')}: {rel} "
+                          + c("bold_yellow", "-- retired upstream, and YOUR "
+                                             "EDITS went with it")
+                          + c("dim", f' because sync_removals is "all"; the '
+                                     f"full copy is in {r.backup_dir}"))
+                else:
+                    print(f"{c('yellow', 'removed')}: {rel} "
+                          + c("dim", "-- retired upstream, your copy was "
+                                     f"unmodified; backed up to {r.backup_dir}"))
             for rel in r.removals_kept:
                 print(f"{c('yellow', 'kept')}: {rel} "
                       + c("dim", "-- retired upstream, but YOUR copy differs "
@@ -2540,7 +2627,7 @@ def main(argv: list[str] | None = None) -> int:
                 over['status_detail'] = 'compact'
             _print_status(checkout, repo, roots, all_diffs, diffs,
                           userconfig.load(roots.get('USER_CLAUDE'), over),
-                          remote=(fetched, fetch_detail, behind),
+                          remote=(fetched, fetch_detail, behind, ahead),
                           manifest=manifest, box=box, pulled=pulled)
             # Behind the upstream is drift too: the checkout is not the
             # latest the fleet has, even when live matches it exactly.

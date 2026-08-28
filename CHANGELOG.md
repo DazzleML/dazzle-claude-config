@@ -4,6 +4,24 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.13] - 2026-08-28
+
+### Added
+- **`ccs doctor` now tells you the state of your config file, not just whether it parses.** A config file can be perfectly valid and still be missing five settings the version you are running knows about -- and those settings govern your machine anyway, at their defaults, with nothing in the file you would open to find out why. Doctor names them, and names the command that adds them. Measured on a real second machine: it held 6 of the 11 settings, and the 5 it lacked included the one that moves files.
+- Having no config file at all is reported as **fine**, because it is -- ccs is designed to behave safely with none. It is still mentioned, along with the command that writes one, since "safe" and "visible" are different things.
+- A setting in your file that this version does not recognise is reported and left alone. It usually means a newer ccs wrote the file, and it can also mean a typo that is silently doing nothing, so it is worth a look either way.
+
+### Changed
+- **`ccs status` no longer calls a checkout "clean" while it holds commits nobody else has.** It already refused to say "clean" when the checkout was *behind*; being *ahead* is the worse of the two to stay quiet about, because behind means the work reaches you on the next pull while ahead means it exists on exactly one machine. The summary now says how many commits are unshared and names `ccs git push`.
+- A checkout that has **diverged** from its remote is told so, and is no longer pointed at `ccs status --pull` -- that only ever fast-forwards, and would refuse.
+- A config file that cannot be read is described in words you can act on: "not valid JSON" rather than the parser's own `JSONDecodeError`. A file that is valid JSON but not an object (a list, say) says *that* instead, since hunting for a syntax error that is not there wastes real time. Every command now says it the same way -- `status`, `apply` and `collect` were still printing the raw exception name while `doctor` and `setup update` used plain language, so the same broken file was described two different ways depending on which command you happened to run.
+- The warning about a file that git ignores now says both halves of what happens to it. It never commits, so no other machine ever receives it -- and because `apply` reads the checkout's working tree rather than git, this machine keeps re-installing it every run. Reading only the first half, a reasonable person concludes the file is inert; it is not, it is syncing in a loop version control cannot see.
+
+### Fixed
+- **`sync_removals: "all"` no longer tells you a file was unmodified when it held your edits.** Setting it to `all` stages every retired file, including one you had changed; the report said "your copy was unmodified" regardless. The file was backed up byte-for-byte either way and nothing was ever lost, but someone whose edited file had just disappeared had no way to learn from that line that their edit was there at all. It now says your edits went with it, and names the setting that caused it.
+- Every verdict in `ccs status` starts its filename in the same column. `checkout` and `live only` were padded to a different width than the per-file verdicts, so in an entry holding both kinds the names sat one column apart and stopped forming a column.
+- The links in the generated settings page now reach the sections they name. Eight of the eleven were dead, because the link text converted underscores to hyphens and the headings did not.
+
 ## [0.5.12] - 2026-08-27
 
 ### Added
@@ -341,7 +359,7 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.12...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.13...HEAD
 [0.5.8]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.5...v0.5.6

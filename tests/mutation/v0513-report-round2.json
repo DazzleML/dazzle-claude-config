@@ -1,0 +1,137 @@
+{
+  "harness": {
+    "name": "mutation_sweep.py",
+    "version": "0.1.0"
+  },
+  "environment": {
+    "python": "3.12.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "root": ".",
+    "test_command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-x",
+      "tests/test_setup_doctor.py",
+      "tests/test_remote_awareness.py",
+      "tests/test_sync_removals_policy.py",
+      "tests/test_userconfig_honesty.py",
+      "tests/test_edge_cases.py",
+      "tests/test_apply.py",
+      "tests/test_deleted_on_purpose.py"
+    ],
+    "timestamp": "2026-08-28T01:06:10-04:00"
+  },
+  "results": [
+    {
+      "id": "M1",
+      "file": "dazzle_claude_config/apply.py",
+      "note": "Inverts held-edits detection: pristine copies get flagged as carrying edits, and genuinely edited files get the silent 'unmodified' message.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M2",
+      "file": "dazzle_claude_config/apply.py",
+      "note": "Flips the 'untouched' policy: locally-modified files get staged for removal while pristine ones are kept -- the exact opposite of the guarantee.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M3",
+      "file": "dazzle_claude_config/apply.py",
+      "note": "Reports the loud 'YOUR EDITS went with it' warning for exactly the wrong set of files.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M4",
+      "file": "dazzle_claude_config/apply.py",
+      "note": "Swaps the kept/pending buckets for unstaged removals, so the report tells the user the opposite of what happened.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M5",
+      "file": "dazzle_claude_config/render.py",
+      "note": "Boundary shift: n == 0 renders '0 setting' instead of '0 settings'.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M6",
+      "file": "dazzle_claude_config/userconfig.py",
+      "note": "None-vs-truthiness: an empty-string unreadable marker reports readable instead of falling through to the phrasing branch.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M7",
+      "file": "dazzle_claude_config/userconfig.py",
+      "note": "Takes the class-name half of the split instead of the message half, so the reason shown is the exception name rather than the parser error.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M8",
+      "file": "dazzle_claude_config/userconfig.py",
+      "note": "Inverted membership guard: known keys are rejected as unknown and unknown keys are written straight into the config.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M9",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Swaps the ahead/behind tuple slots, so status offers `ccs git push` when the checkout is behind and `--pull` when it is ahead.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M10",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "and/or swap: a one-sided behind or ahead takes the divergence branch, so the targeted fast-forward and push advice is never reached.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M11",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Off-by-one on both pluralisation boundaries, which also desynchronises noun and verb agreement above ahead == 1.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M12",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Dropped existence guard: the unknown-keys warning can fire for a config file that is not there.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M13",
+      "file": "dazzle_claude_config/cli.py",
+      "note": "Drops the column padding on one leg only, breaking alignment between the live-only and checkout rows.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    }
+  ],
+  "summary": {
+    "killed": 12,
+    "survived": 1
+  },
+  "anomalies": []
+}

@@ -92,10 +92,12 @@ compared  83 files across 11 entries of config
 protected (1 file kept out of sync on purpose -- matches a deny rule, so ccs will not copy it in either direction)
   bin/gpg-loopback.sh
 
-status: clean -- your live config and the checkout match; nothing to collect, nothing to apply
+status: clean -- everything ccs syncs matches; nothing to collect, nothing to apply
 ```
 
 Output is colorized on a TTY (and plain when piped, or with `--no-color` / `NO_COLOR`).
+
+`clean` is a claim about all three legs, not just the first two. If the checkout holds commits the remote does not, the summary says so and names `ccs git push` rather than calling the machine clean -- work that exists on exactly one disk is the state least worth staying quiet about. Behind, it names `ccs status --pull`; diverged, it says so and points at the checkout, because a fast-forward cannot help once both sides have moved.
 
 `ccs status --long` labels each differing file with which side moved, and how sure it is. `one-sided` means one side changed and the other still matches a commit -- safe to copy in that direction. `two-sided` means both moved, so neither verb is safe and `merge` is the answer. **`unattributed`** means ccs will not say: the file's history points one way, but the side it points at holds no lines the other side lacks, which is more consistent with that side being stale than ahead. The entry above such a file reads `direction unproven` rather than claiming everything under it is one-sided. In that case ccs names `ccs diff` -- which only reads -- instead of a verb that writes, because an honest "I cannot tell" is worth more than a confident wrong direction.
 

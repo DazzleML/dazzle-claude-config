@@ -274,3 +274,72 @@ def test_humanize_branch_states():
     assert humanize_branch("## main...origin/main [gone]", fetched=True) == \
         "on main, upstream origin/main no longer exists on the remote"
     assert humanize_branch("## main", fetched=True) == "on main, no upstream configured"
+
+
+# -- the summary line, for a checkout that is AHEAD ---------------------------
+#
+# The summary already refused to say "clean" while the checkout was BEHIND.
+# It said it happily while the checkout was AHEAD, and that is the worse of
+# the two to stay quiet about: behind means the work arrives on your next
+# pull, ahead means it exists on exactly one machine. Found by the maintainer
+# reading real output, not by any of these tests.
+
+def _commit_locally(w, content=b"local only\n"):
+    """Advance the CHECKOUT without pushing -- work on one machine only."""
+    (w["co"] / "dotclaude" / "F.md").write_bytes(content)
+    _git(w["co"], "commit", "-qam", "work that exists here and nowhere else")
+    (w["live"] / "F.md").write_bytes(content)     # keep live == checkout
+
+
+def test_a_checkout_that_is_AHEAD_is_not_called_clean(fleet, capsys):
+    _commit_locally(fleet)
+    main(_ccs(fleet, "status"))
+    out = capsys.readouterr().out
+    assert "status: clean" not in out, (
+        "a commit that exists on exactly one machine is not 'clean'\n" + out)
+    assert "live matches the checkout" in out, (
+        "the live-vs-checkout fact is still true and must still be stated")
+    assert "not on origin/main yet" in out, out
+    assert "ccs git push" in out, "the summary must name the verb that acts"
+
+
+def test_the_ahead_summary_counts_in_english(fleet, capsys):
+    """One commit is 'commit ... is', two are 'commits ... are'.
+
+    Written both ways deliberately. Four times this release a plural was
+    fixed on the line somebody was looking at and left wrong on the next, and
+    a test that pins only the singular is exactly how that keeps happening.
+    """
+    _commit_locally(fleet, b"one\n")
+    main(_ccs(fleet, "status"))
+    out = capsys.readouterr().out
+    assert "1 commit here is not on" in out, out
+
+    _commit_locally(fleet, b"two\n")
+    main(_ccs(fleet, "status"))
+    out = capsys.readouterr().out
+    assert "2 commits here are not on" in out, out
+
+
+def test_a_DIVERGED_checkout_is_not_told_to_fast_forward(fleet, capsys):
+    """Both sides moved, so `--pull` cannot help -- it fast-forwards only and
+    will refuse. Recommending it would send the reader to a command that
+    cannot work, which is the same class of defect as `apply` printing
+    `ccs collect` for a stale file."""
+    _push_from_other(fleet)          # remote advances
+    _commit_locally(fleet)           # and so does the checkout
+    main(_ccs(fleet, "status"))
+    out = capsys.readouterr().out
+    assert "diverged" in out, out
+    assert "status --pull" not in out, (
+        "a fast-forward cannot resolve a divergence; do not recommend it\n" + out)
+    assert "ccs git" in out, "point at the checkout, where it can be resolved"
+
+
+def test_in_sync_and_matching_is_still_plainly_clean(fleet, capsys):
+    """The guard on the three tests above: none of them may have made the
+    ordinary case noisy. Nothing pending anywhere is still one green line."""
+    rc = main(_ccs(fleet, "status"))
+    out = capsys.readouterr().out
+    assert "status: clean" in out, out
+    assert rc == 0

@@ -64,6 +64,17 @@ def n_entries(n: int) -> str:
     return f"{n} entry" if n == 1 else f"{n} entries"
 
 
+def n_settings(n: int) -> str:
+    """One place to say "3 settings" or "1 setting".
+
+    Here rather than inline at each call site because this exact phrase has
+    been got wrong twice in one release, both times the same way: a plural
+    corrected where somebody was looking and left wrong on the next line
+    down. A phrase built once cannot disagree with itself.
+    """
+    return f"{n} setting" if n == 1 else f"{n} settings"
+
+
 _BRANCH_RE = re.compile(
     r"^## (?P<local>[^.\s]+)(?:\.\.\.(?P<remote>\S+))?(?: \[(?P<track>[^\]]+)\])?")
 

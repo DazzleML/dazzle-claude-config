@@ -257,7 +257,12 @@ def test_applying_a_plan_over_a_file_that_PARSES_but_is_not_an_object_raises():
     d = _P(tempfile.mkdtemp())
     (d / "ccs-config.json").write_text("[1, 2, 3]", encoding="utf-8")
     plan = userconfig.plan_config(d)
-    assert plan.unreadable == "the file is not a JSON object"
+    # Pin the CANONICAL sentence, not a copy of its text. This asserted the
+    # literal words, so improving the wording broke the test rather than the
+    # test proving the wording is shared -- which is the same "two copies that
+    # must agree" trap the constant exists to remove.
+    assert plan.unreadable == userconfig.NOT_AN_OBJECT
+    assert "not a JSON object" in plan.unreadable   # ...and it still says so
     with pytest.raises(ValueError) as excinfo:
         userconfig.apply_config_plan(plan)
     # ...and specifically OUR refusal, not an incidental decode error

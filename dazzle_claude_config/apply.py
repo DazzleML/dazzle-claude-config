@@ -33,6 +33,11 @@ class ApplyResult:
     removals_pending: list[str] = field(default_factory=list)  # reported, not synced
     local_only: list[str] = field(default_factory=list)        # never in the checkout
     removals_staged: list[str] = field(default_factory=list)   # moved to backup
+    #: The subset of `removals_staged` whose live copy matched NO committed
+    #: version -- staged only because sync_removals is "all". Separate so the
+    #: report can tell a user their edits were staged away instead of
+    #: claiming the copy was unmodified.
+    removals_staged_edited: list[str] = field(default_factory=list)
     removals_kept: list[str] = field(default_factory=list)     # #31: retired, but YOUR copy differs
     deferred: list[str] = field(default_factory=list)          # render/plugins entries
     skipped: list[tuple[str, str]] = field(default_factory=list)  # (path, reason): wrong direction
@@ -164,8 +169,18 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
                 sync_removals = "all"
             elif sync_removals is False:
                 sync_removals = "never"
+            held_edits = False
             if sync_removals == "all":
                 stage = True
+                # Ask anyway. Under "all" the answer cannot change WHAT ccs
+                # does -- the file is staged either way -- but it decides what
+                # ccs is entitled to SAY afterwards. Without this the report
+                # told a user their copy "was unmodified" while backing up a
+                # file that held their edits: the data was safe and the
+                # sentence was false, which is exactly the shape of dishonesty
+                # this release exists to remove.
+                held_edits = repo is not None and not _live_matches_history(
+                    repo, repo_rel, live_path)
             elif sync_removals == "untouched" and repo is not None:
                 stage = _live_matches_history(repo, repo_rel, live_path)
             if stage:
@@ -176,6 +191,8 @@ def apply(manifest: Manifest, checkout: Path, roots: dict[str, Path],
                         result.failed.append((display, str(e)))
                         continue
                 result.removals_staged.append(display)
+                if held_edits:
+                    result.removals_staged_edited.append(display)
             elif sync_removals == "untouched":
                 # Retired upstream, but this copy is yours -- say which.
                 result.removals_kept.append(display)

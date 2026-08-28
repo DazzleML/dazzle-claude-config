@@ -81,7 +81,12 @@ def test_an_unmodified_retired_file_is_removed_by_default(world, capsys):
     out = capsys.readouterr().out
     assert not _retired(world).exists(), out
     assert "removed" in out and "retired upstream" in out
-    assert "unmodified" in out                    # names the REASON, not the mechanism
+    # The whole phrase. This asserted the bare word "unmodified" and passed
+    # regardless, because pytest's temp directory is named after the test
+    # function -- which contains that word -- and the path is printed in the
+    # backup line. Found while auditing a NEW test with the same flaw; this
+    # one had it from the start.
+    assert "your copy was unmodified" in out      # names the REASON, not the mechanism
 
 
 def test_a_retired_file_YOU_edited_is_kept(world, capsys):
@@ -225,3 +230,81 @@ def test_a_checkout_BEHIND_its_upstream_does_not_auto_remove(world, capsys, tmp_
     assert _retired(world).exists(), out
     assert "not staging retired files" in out, out
     assert "behind its upstream" in out, out
+
+
+# -- what "all" is allowed to SAY about a file it staged -----------------------
+#
+# Found by a tester running the v0.5.10 checklist: under `sync_removals: "all"`
+# a file holding the user's own edits was staged away and reported as "your
+# copy was unmodified". The backup was byte-exact, so nothing was lost -- but
+# the sentence was false, and a person whose edited file had just vanished had
+# no way to learn from it that their edit was ever there.
+
+def test_all_does_not_call_an_EDITED_file_unmodified(world, capsys):
+    """The load-bearing one. `all` stages regardless, so the check exists
+    purely to decide what ccs is entitled to say afterwards."""
+    _retired(world).write_bytes(RETIRED + b"MY OWN EDIT\n")
+    _cfg(world, sync_removals="all")
+    main(_ccs(world, "apply"))
+    out = capsys.readouterr().out
+
+    assert not _retired(world).exists(), out
+    assert "unmodified" not in out, (
+        "this copy was NOT unmodified -- it held the user's edits\n" + out)
+    assert "YOUR EDITS" in out, out
+    assert 'sync_removals is "all"' in out, (
+        "name the setting that caused it, so the reader knows what to change")
+
+
+def test_all_still_says_unmodified_when_the_copy_really_was(world, capsys):
+    """The other half. A test pinning only the edited case would let the
+    ordinary message drift into alarming everybody -- and this release has
+    already shipped four plurals fixed on one line and wrong on the next."""
+    _cfg(world, sync_removals="all")
+    main(_ccs(world, "apply"))
+    out = capsys.readouterr().out
+    assert not _retired(world).exists(), out
+    # The whole PHRASE, not the bare word. Asserting on "unmodified" alone
+    # passed even with the message deleted, because pytest names its temp
+    # directory after the test function -- `test_all_still_says_unmodified0`
+    # -- and that path is printed in the backup line. The test was matching
+    # its own name. Caught by a red-green audit that reported it as a guard
+    # when it should have been an anchor; the audit was right and the
+    # assertion was lazy.
+    assert "your copy was unmodified" in out, out
+    assert "YOUR EDITS" not in out, out
+
+
+def test_the_edited_file_is_recoverable_and_byte_exact(world, capsys):
+    """The message changed; the guarantee behind it must not have. Staging is
+    a move into the backup directory, never a delete, and that is the only
+    reason the honest message is 'your edits went with it' rather than an
+    apology."""
+    body = RETIRED + b"MY OWN EDIT\n"
+    _retired(world).write_bytes(body)
+    _cfg(world, sync_removals="all")
+    main(_ccs(world, "apply"))
+    out = capsys.readouterr().out
+
+    backups = list((world["user"] / "backups").rglob("retired.md"))
+    assert backups, f"no backup found; output was:\n{out}"
+    assert backups[0].read_bytes() == body, "the backup must be byte-exact"
+
+
+def test_the_result_separates_edited_removals_from_ordinary_ones(world):
+    """Structured, not just printed. `removals_staged` stays the full list so
+    existing callers are unaffected; the edited ones are a subset alongside."""
+    from dazzle_claude_config import apply as apply_mod
+    from dazzle_claude_config.gitops import CheckoutRepo
+    from dazzle_claude_config.manifest import Manifest
+    _retired(world).write_bytes(RETIRED + b"MY OWN EDIT\n")
+    # The repo is what makes the distinction possible at all -- without it
+    # ccs cannot know whether the copy matched a commit, and must not guess.
+    r = apply_mod.apply(Manifest.load(world["co"]), world["co"],
+                        {"CLAUDE_DIR": world["live"],
+                         "USER_CLAUDE": world["user"]},
+                        world["user"] / "backups",
+                        repo=CheckoutRepo(world["co"]),
+                        sync_removals="all")
+    assert "skills/retired.md" in r.removals_staged
+    assert "skills/retired.md" in r.removals_staged_edited

@@ -26,17 +26,17 @@ You do not need this page to answer a question about one setting -- `--explain <
 
 | Setting | Default | Environment variable |
 |---|---|---|
-| [`on_divergence`](#on-divergence) | `"prompt"` | `CCS_ON_DIVERGENCE` |
+| [`on_divergence`](#on_divergence) | `"prompt"` | `CCS_ON_DIVERGENCE` |
 | [`difftool`](#difftool) | `null` | `CCS_DIFFTOOL` |
-| [`ai_merge_command`](#ai-merge-command) | `null` | `CCS_AI_MERGE_COMMAND` |
+| [`ai_merge_command`](#ai_merge_command) | `null` | `CCS_AI_MERGE_COMMAND` |
 | [`interactive`](#interactive) | `true` | `CCS_INTERACTIVE` |
-| [`status_detail`](#status-detail) | `"auto"` | `CCS_STATUS_DETAIL` |
-| [`status_max_lines`](#status-max-lines) | `30` | `CCS_STATUS_MAX_LINES` |
+| [`status_detail`](#status_detail) | `"auto"` | `CCS_STATUS_DETAIL` |
+| [`status_max_lines`](#status_max_lines) | `30` | `CCS_STATUS_MAX_LINES` |
 | [`fetch`](#fetch) | `true` | `CCS_FETCH` |
-| [`fetch_timeout`](#fetch-timeout) | `15` | `CCS_FETCH_TIMEOUT` |
-| [`require_current`](#require-current) | `false` | `CCS_REQUIRE_CURRENT` |
-| [`auto_pull`](#auto-pull) | `false` | `CCS_AUTO_PULL` |
-| [`sync_removals`](#sync-removals) | `"untouched"` | `CCS_SYNC_REMOVALS` |
+| [`fetch_timeout`](#fetch_timeout) | `15` | `CCS_FETCH_TIMEOUT` |
+| [`require_current`](#require_current) | `false` | `CCS_REQUIRE_CURRENT` |
+| [`auto_pull`](#auto_pull) | `false` | `CCS_AUTO_PULL` |
+| [`sync_removals`](#sync_removals) | `"untouched"` | `CCS_SYNC_REMOVALS` |
 
 
 ### on_divergence

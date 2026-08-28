@@ -179,3 +179,127 @@ def test_doctor_reads_only(world, capsys):
     # Doctor on a broken world changes nothing: no box file appears.
     _doctor(world, capsys)
     assert not (world["user"] / "ccs-box.json").exists()
+
+
+# -- doctor's config section (#32, the sixth acceptance criterion) -------------
+#
+# Doctor used to ask one question about the config file: does it parse? A file
+# can parse perfectly and still be missing five settings this version knows --
+# which is the entire reason #32 exists. v0.5.10 made it concrete by adding a
+# default that MOVES FILES, so a machine could acquire a file-touching
+# behaviour on upgrade with nothing in its own config recording that the
+# setting existed, and nothing anywhere telling anyone.
+
+def _cfg(w, body: dict):
+    (w["user"] / "ccs-config.json").write_text(
+        json.dumps(body, indent=2), encoding="utf-8")
+
+
+#: A config as an older ccs would have written it -- the shape measured on a
+#: real second machine, which held 6 of the settings this version knows.
+OLD_SHAPE = {"on_divergence": "prompt", "difftool": None, "interactive": True,
+             "status_detail": "auto", "status_max_lines": 30, "fetch": True}
+
+
+def test_doctor_reports_a_config_that_lacks_settings_and_NAMES_them(
+        world, capsys):
+    """A count is not actionable. The reader needs to know it is
+    `sync_removals` in particular, because that is the one that moves files."""
+    main(_args(world, "setup", "box", "--name", "testbox"))
+    _cfg(world, OLD_SHAPE)
+    capsys.readouterr()
+    rc, out = _doctor(world, capsys)
+    assert rc == 1, out
+    assert "sync_removals" in out, out
+    assert "auto_pull" in out and "require_current" in out, out
+    assert "ccs setup update" in out, "name the command that fixes it"
+    assert "without changing anything you set" in out, (
+        "the reason people hesitate to run it is fear it will edit their "
+        "settings; say that it will not")
+
+
+def test_doctor_is_quiet_about_a_config_that_is_current(world, capsys):
+    from dazzle_claude_config import userconfig
+    main(_args(world, "setup", "box", "--name", "testbox"))
+    _cfg(world, dict(userconfig.DEFAULTS))
+    capsys.readouterr()
+    rc, out = _doctor(world, capsys)
+    assert "none missing" in out, out
+    assert "predates" not in out, out
+
+
+def test_an_absent_config_is_reported_but_is_NOT_a_warning(world, capsys):
+    """Running with no config file is the designed state and behaves safely.
+    Flagging every fresh machine yellow for doing nothing wrong is how people
+    learn to ignore doctor -- but it is still worth SAYING, because safe and
+    visible are different things and #32 is about the second."""
+    main(_args(world, "setup", "box", "--name", "testbox"))
+    capsys.readouterr()
+    rc, out = _doctor(world, capsys)
+    # Assert on the LINE, not the exit code: this world has no remote, so
+    # doctor rightly warns about that, and checking rc here would be
+    # measuring somebody else's finding.
+    line = next(ln for ln in out.splitlines() if "no config file yet" in ln)
+    assert line.strip().startswith("[ OK ]"), (
+        f"an absent config is the designed state, not a warning:\n{line}")
+    assert "built-in defaults in effect" in line
+    assert "ccs setup update" in line
+
+
+def test_doctor_reports_an_unknown_key_and_does_not_call_it_broken(
+        world, capsys):
+    """It usually means a NEWER ccs wrote the file. Worth a look -- it can
+    equally be a typo that is silently doing nothing -- but the file is not
+    damaged and ccs will not touch the key."""
+    from dazzle_claude_config import userconfig
+    body = dict(userconfig.DEFAULTS)
+    body["from_a_newer_ccs"] = True
+    main(_args(world, "setup", "box", "--name", "testbox"))
+    _cfg(world, body)
+    capsys.readouterr()
+    rc, out = _doctor(world, capsys)
+    assert "from_a_newer_ccs" in out, out
+    assert "left alone" in out, out
+
+
+def test_doctor_says_NOT_VALID_JSON_rather_than_the_parser_s_word(
+        world, capsys):
+    main(_args(world, "setup", "box", "--name", "testbox"))
+    (world["user"] / "ccs-config.json").write_text("{oops", encoding="utf-8")
+    capsys.readouterr()
+    rc, out = _doctor(world, capsys)
+    assert "not valid JSON" in out, out
+    assert "JSONDecodeError" not in out, (
+        "'JSONDecodeError' tells the reader nothing they can act on\n" + out)
+
+
+def test_a_config_that_is_a_LIST_is_not_called_invalid_json(world, capsys):
+    """`[1, 2, 3]` IS valid JSON and still cannot be a config. Calling that
+    'not valid JSON' sends someone hunting for a syntax error that is not
+    there -- the two failures are different and must stay different."""
+    main(_args(world, "setup", "box", "--name", "testbox"))
+    (world["user"] / "ccs-config.json").write_text("[1, 2, 3]", encoding="utf-8")
+    capsys.readouterr()
+    rc, out = _doctor(world, capsys)
+    assert "not a JSON object" in out, out
+    assert "not valid JSON" not in out, out
+
+
+def test_doctor_reads_the_config_and_writes_NOTHING(world, capsys):
+    """doctor is read-only by contract -- it runs on a read-only-policy box.
+    Hashing the whole scratch world is the only check that actually proves it,
+    because a write to any file in it would be a contract breach."""
+    import hashlib
+
+    def fingerprint(root: Path) -> dict:
+        return {str(p.relative_to(root)):
+                hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(root.rglob("*")) if p.is_file()}
+
+    main(_args(world, "setup", "box", "--name", "testbox"))
+    _cfg(world, OLD_SHAPE)
+    before = {k: fingerprint(world[k]) for k in ("co", "live", "user")}
+    capsys.readouterr()
+    _doctor(world, capsys)
+    after = {k: fingerprint(world[k]) for k in ("co", "live", "user")}
+    assert before == after, "doctor must not write anything, anywhere"

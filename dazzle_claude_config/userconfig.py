@@ -19,6 +19,25 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+#: The ONE sentence ccs uses for a config file that parses but cannot be a
+#: config, and the ONE function that phrases a parse failure. Both are here,
+#: as data and as a function, because they were written out separately at each
+#: site and then had to agree by hand -- which they did not: `doctor` and
+#: `setup update` said "not valid JSON" while `status`, `apply` and `collect`
+#: printed `JSONDecodeError` verbatim, so the same broken file was described
+#: two ways depending on which verb you happened to run.
+#:
+#: The two cases stay distinct on purpose. `[1, 2, 3]` IS valid JSON and still
+#: cannot be a config; calling that "not valid JSON" sends someone hunting for
+#: a syntax error that is not there.
+NOT_AN_OBJECT = "the top level is not a JSON object -- it must be { ... }"
+
+
+def not_valid_json(exc) -> str:
+    """How ccs describes a file the JSON parser rejected."""
+    return f"not valid JSON ({exc})"
+
+
 #: Where the prose lives, inside the installed package. Shipping it as package
 #: DATA rather than only as a web page is the point: `--explain <setting>` must
 #: answer on a VPS over SSH, with no browser, no config file and no network.
@@ -188,15 +207,25 @@ def load(user_claude: Path | None = None, overrides: dict | None = None) -> dict
             # other three user-territory records already tolerate a BOM.
             data = json.loads(path.read_text(encoding="utf-8-sig"))
             if not isinstance(data, dict):
-                errors.append(f"{path}: expected a JSON object")
+                errors.append(f"{path}: {NOT_AN_OBJECT}")
             else:
                 for k, v in data.items():
                     if k in DEFAULTS:
                         cfg[k] = v
                     else:
                         errors.append(f"{path}: unknown key {k!r} (ignored)")
-        except (OSError, json.JSONDecodeError) as e:
-            errors.append(f"{path}: {e.__class__.__name__}: {e}")
+        except json.JSONDecodeError as e:
+            # The reader's words, not the parser's. This path is the OLDEST of
+            # the three that report a broken config -- `doctor` and
+            # `setup update` were given plain language and this one was left
+            # printing `JSONDecodeError:` verbatim, so the same file produced
+            # two different qualities of message depending on which verb you
+            # happened to run. Found by a tester cross-checking three
+            # checklists against each other, which is the only way that kind
+            # of inconsistency surfaces.
+            errors.append(f"{path}: {not_valid_json(e)}")
+        except OSError as e:
+            errors.append(f"{path}: cannot be read ({e.strerror or e})")
 
     for key, env in ENV_MAP.items():
         raw = os.environ.get(env)
@@ -269,6 +298,24 @@ class ConfigPlan:
         """
         return self.unreadable is not None
 
+    @property
+    def unreadable_reason(self) -> str | None:
+        """The reason, ready to print. Now simply `unreadable` itself.
+
+        This used to RE-DERIVE the sentence: the field held the parser's own
+        `JSONDecodeError: ...` and this property translated it by sniffing for
+        a substring. That meant the wording existed twice -- here and again in
+        `load()` -- and the two had to agree by hand. They did not, which is
+        the defect this release fixed, so leaving the second copy in place
+        would have rebuilt the trap while claiming to have removed it.
+
+        `plan_config` now stores the sentence ccs will actually print, built
+        by `not_valid_json()` / `NOT_AN_OBJECT`, so there is one definition and
+        nothing to translate. The property stays because callers read it and
+        it names the intent, not because it does any work.
+        """
+        return self.unreadable
+
 
 def plan_config(user_claude: Path | None = None) -> ConfigPlan:
     """Compare the file on disk against the keys this version knows.
@@ -286,10 +333,10 @@ def plan_config(user_claude: Path | None = None) -> ConfigPlan:
         data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as e:
         return ConfigPlan(path=path, exists=True, missing={}, unknown=[],
-                          unreadable=f"{type(e).__name__}: {e}")
+                          unreadable=not_valid_json(e))
     if not isinstance(data, dict):
         return ConfigPlan(path=path, exists=True, missing={}, unknown=[],
-                          unreadable="the file is not a JSON object")
+                          unreadable=NOT_AN_OBJECT)
     present = set(data)
     return ConfigPlan(
         path=path, exists=True,

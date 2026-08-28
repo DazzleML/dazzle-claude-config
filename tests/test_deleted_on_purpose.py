@@ -136,18 +136,33 @@ def test_every_verdict_label_starts_the_filename_in_the_SAME_column(
     wrong with the information -- it just stopped being a column.
     """
     w = _world(tmp_path)
-    # The defect needs BOTH kinds in one entry: unwanted.md exists only in the
-    # checkout, and a.md must actually differ, so give live its own version.
+    # ALL THREE kinds in one entry, because each is printed by its own loop
+    # and each pads independently:
+    #   unwanted.md  -- only in the checkout   ("checkout")
+    #   mine.md      -- only in live           ("live only")
+    #   a.md         -- differs on both sides  (a per-file verdict)
+    # An earlier version of this test omitted the live-only case, so a
+    # mutation that dropped the padding on exactly that loop survived: the
+    # line was never printed, and a branch that never runs cannot be wrong.
     (w["live"] / "skills" / "a.md").write_bytes(b"keep me, but edited here\n")
+    (w["live"] / "skills" / "mine.md").write_bytes(b"only I have this\n")
     main(_ccs(w, "status", "--long"))
     out = capsys.readouterr().out
-    lines = [ln for ln in out.splitlines()
-             if ("unwanted.md" in ln or "a.md" in ln) and ln.startswith("      ")]
-    assert len(lines) >= 2, f"expected both kinds of line, got:\n{out}"
-    starts = {ln.index(ln.split()[1]) for ln in lines}
+    # Locate each filename directly rather than by token position. An earlier
+    # version took `line.split()[1]`, which is the filename only while every
+    # label is a single word -- "live only" is two, so it measured the column
+    # of the word "only" and reported a misalignment that was not there.
+    starts, seen = set(), {}
+    for name in ("mine.md", "unwanted.md", "a.md"):
+        line = next((ln for ln in out.splitlines()
+                     if ln.startswith("      ") and name in ln), None)
+        assert line is not None, f"no line for {name}; output was:\n{out}"
+        seen[name] = line
+        starts.add(line.index(name))
     assert len(starts) == 1, (
         f"filenames start in different columns {sorted(starts)} -- the "
-        f"verdict labels are padded to different widths:\n" + "\n".join(lines))
+        f"verdict labels are padded to different widths:\n"
+        + "\n".join(seen.values()))
 
 
 def test_an_ordinary_modification_does_not_trigger_the_notice(tmp_path, capsys):

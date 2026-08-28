@@ -1,0 +1,117 @@
+{
+  "_note": "v0.5.13 -- u10 (doctor's config section), the ahead/clean status summary, and the four fixes from the v0.5.10-v0.5.12 tester run. Fresh-context generation (mode 1): source text and contract only, zero tool uses. Round 1 ran without tests/test_deleted_on_purpose.py, which is where M13's killing test lives -- M13's round-1 survival was a spec defect, not a coverage gap. Round 3: M6/M7 re-aimed after the wording was consolidated into NOT_AN_OBJECT / not_valid_json(); M14 added for the third-copy case.",
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "-x",
+    "tests/test_setup_doctor.py",
+    "tests/test_remote_awareness.py",
+    "tests/test_sync_removals_policy.py",
+    "tests/test_userconfig_honesty.py",
+    "tests/test_edge_cases.py",
+    "tests/test_apply.py",
+    "tests/test_deleted_on_purpose.py"
+  ],
+  "mutations": [
+    {
+      "id": "M1",
+      "file": "dazzle_claude_config/apply.py",
+      "original": "                held_edits = repo is not None and not _live_matches_history(\n                    repo, repo_rel, live_path)",
+      "mutated": "                held_edits = repo is not None and _live_matches_history(\n                    repo, repo_rel, live_path)",
+      "note": "Inverts held-edits detection: pristine copies get flagged as carrying edits, and genuinely edited files get the silent 'unmodified' message."
+    },
+    {
+      "id": "M2",
+      "file": "dazzle_claude_config/apply.py",
+      "original": "            elif sync_removals == \"untouched\" and repo is not None:\n                stage = _live_matches_history(repo, repo_rel, live_path)",
+      "mutated": "            elif sync_removals == \"untouched\" and repo is not None:\n                stage = not _live_matches_history(repo, repo_rel, live_path)",
+      "note": "Flips the 'untouched' policy: locally-modified files get staged for removal while pristine ones are kept -- the exact opposite of the guarantee."
+    },
+    {
+      "id": "M3",
+      "file": "dazzle_claude_config/apply.py",
+      "original": "                result.removals_staged.append(display)\n                if held_edits:\n                    result.removals_staged_edited.append(display)",
+      "mutated": "                result.removals_staged.append(display)\n                if not held_edits:\n                    result.removals_staged_edited.append(display)",
+      "note": "Reports the loud 'YOUR EDITS went with it' warning for exactly the wrong set of files."
+    },
+    {
+      "id": "M4",
+      "file": "dazzle_claude_config/apply.py",
+      "original": "            elif sync_removals == \"untouched\":\n                # Retired upstream, but this copy is yours -- say which.\n                result.removals_kept.append(display)\n            else:\n                result.removals_pending.append(display)",
+      "mutated": "            elif sync_removals == \"untouched\":\n                # Retired upstream, but this copy is yours -- say which.\n                result.removals_pending.append(display)\n            else:\n                result.removals_kept.append(display)",
+      "note": "Swaps the kept/pending buckets for unstaged removals, so the report tells the user the opposite of what happened."
+    },
+    {
+      "id": "M5",
+      "file": "dazzle_claude_config/render.py",
+      "original": "    return f\"{n} setting\" if n == 1 else f\"{n} settings\"",
+      "mutated": "    return f\"{n} setting\" if n <= 1 else f\"{n} settings\"",
+      "note": "Boundary shift: n == 0 renders '0 setting' instead of '0 settings'."
+    },
+    {
+      "id": "M6",
+      "file": "dazzle_claude_config/userconfig.py",
+      "original": "                          unreadable=not_valid_json(e))",
+      "mutated": "                          unreadable=f\"{type(e).__name__}: {e}\")",
+      "note": "plan_config writes its OWN wording instead of the shared one -- the exact regression the consolidation removed."
+    },
+    {
+      "id": "M7",
+      "file": "dazzle_claude_config/userconfig.py",
+      "original": "            errors.append(f\"{path}: {not_valid_json(e)}\")",
+      "mutated": "            errors.append(f\"{path}: {e.__class__.__name__}: {e}\")",
+      "note": "load() reverts to the parser's class name, re-opening the two-qualities-of-message defect."
+    },
+    {
+      "id": "M8",
+      "file": "dazzle_claude_config/userconfig.py",
+      "original": "                for k, v in data.items():\n                    if k in DEFAULTS:\n                        cfg[k] = v\n                    else:\n                        errors.append(f\"{path}: unknown key {k!r} (ignored)\")",
+      "mutated": "                for k, v in data.items():\n                    if k not in DEFAULTS:\n                        cfg[k] = v\n                    else:\n                        errors.append(f\"{path}: unknown key {k!r} (ignored)\")",
+      "note": "Inverted membership guard: known keys are rejected as unknown and unknown keys are written straight into the config."
+    },
+    {
+      "id": "M9",
+      "file": "dazzle_claude_config/cli.py",
+      "original": "    behind = remote[2] if len(remote) > 2 else None\n    ahead = remote[3] if len(remote) > 3 else None",
+      "mutated": "    behind = remote[3] if len(remote) > 3 else None\n    ahead = remote[2] if len(remote) > 2 else None",
+      "note": "Swaps the ahead/behind tuple slots, so status offers `ccs git push` when the checkout is behind and `--pull` when it is ahead."
+    },
+    {
+      "id": "M10",
+      "file": "dazzle_claude_config/cli.py",
+      "original": "    if not diffs and behind and ahead:",
+      "mutated": "    if not diffs and (behind or ahead):",
+      "note": "and/or swap: a one-sided behind or ahead takes the divergence branch, so the targeted fast-forward and push advice is never reached."
+    },
+    {
+      "id": "M11",
+      "file": "dazzle_claude_config/cli.py",
+      "original": "        commits = \"commit\" if ahead == 1 else \"commits\"\n        is_are = \"is\" if ahead == 1 else \"are\"",
+      "mutated": "        commits = \"commit\" if ahead <= 1 else \"commits\"\n        is_are = \"is\" if ahead >= 1 else \"are\"",
+      "note": "Off-by-one on both pluralisation boundaries, which also desynchronises noun and verb agreement above ahead == 1."
+    },
+    {
+      "id": "M12",
+      "file": "dazzle_claude_config/cli.py",
+      "original": "    if plan.exists and plan.unknown:",
+      "mutated": "    if plan.exists or plan.unknown:",
+      "note": "Dropped existence guard: the unknown-keys warning can fire for a config file that is not there."
+    },
+    {
+      "id": "M13",
+      "file": "dazzle_claude_config/cli.py",
+      "original": "            print(f\"      {c('yellow', 'live only'.ljust(10))}  {rel}\")",
+      "mutated": "            print(f\"      {c('yellow', 'live only')}  {rel}\")",
+      "note": "Drops the column padding on one leg only, breaking alignment between the live-only and checkout rows."
+    },
+    {
+      "id": "M14",
+      "file": "dazzle_claude_config/userconfig.py",
+      "original": "                          unreadable=NOT_AN_OBJECT)",
+      "mutated": "                          unreadable=\"the file is not a JSON object\")",
+      "note": "A third hand-written copy of the not-an-object sentence, agreeing with nothing."
+    }
+  ]
+}

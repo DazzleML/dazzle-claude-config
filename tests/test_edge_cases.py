@@ -304,3 +304,45 @@ def test_cli_nested_plain_dir_refused_a4_repo_root_guard(tmp_path, monkeypatch, 
         f"stdout={captured.out!r} stderr={captured.err!r}")
     assert "not a git repository root" in captured.err
     assert "status: clean" not in captured.out
+
+
+# -- deny by manifest GLOB, not just by hard-coded name ------------------------
+#
+# The three deny tests above all use `.credentials.json`, a HARD_DENY *name*.
+# Nothing exercised a manifest `deny` GLOB -- which is the form a payload
+# actually uses for whole directories (`**/.vscode/**`, `**/cache/**`,
+# `**/.git/**`) and the form the maintainer's own live config depends on right
+# now. Gap found by a concurrent session reading this file; it verified the
+# behaviour works and observed that nothing would notice if it stopped.
+
+def test_is_denied_honours_a_manifest_glob_at_every_depth():
+    from dazzle_claude_config import secrets
+    deny = ["**/.vscode/**"]
+    for rel in ("dotclaude/.vscode/settings.json",
+                "dotclaude/commands/.vscode/settings.json",
+                "dotclaude/skills/dev-workflow-process/.vscode/settings.json",
+                "commands/.vscode/settings.json"):   # the rel-form apply uses
+        assert secrets.is_denied(rel, deny) == "**/.vscode/**", (
+            f"{rel} should be denied by the glob")
+    assert secrets.is_denied("dotclaude/skills/gauntlet/SKILL.md", deny) is None
+
+
+def test_a_manifest_glob_is_reported_with_the_PATTERN_that_matched():
+    """The report has to name the rule, not just the file -- otherwise the
+    reader cannot tell which of a dozen deny entries to edit."""
+    from dazzle_claude_config import secrets
+    got = secrets.is_denied("dotclaude/x/cache/blob.bin", ["**/cache/**"])
+    assert got == "**/cache/**", got
+
+
+def test_a_glob_denies_in_BOTH_directions(tmp_path):
+    """deny is symmetric by contract -- ccs will not copy the file either way.
+    A test proving only the apply side would leave collect free to drag the
+    file back into the payload, which is the same leak with the arrow
+    reversed."""
+    from dazzle_claude_config import secrets
+    rel = "dotclaude/commands/.vscode/settings.json"
+    deny = ["**/.vscode/**"]
+    # One predicate serves both verbs; assert that rather than trusting it.
+    assert secrets.is_denied(rel, deny) is not None
+    assert secrets.is_denied(rel.replace("dotclaude/", ""), deny) is not None

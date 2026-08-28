@@ -65,7 +65,18 @@ def render() -> str:
     out.append("\n| Setting | Default | Environment variable |")
     out.append("|---|---|---|")
     for name, k in keys.items():
-        out.append(f"| [`{name}`](#{name.replace('_', '-')}) "
+        # The anchor is the heading text itself. It used to be
+        # `name.replace('_', '-')`, on the assumption that GitHub turns
+        # underscores into hyphens the way it does spaces. It does not --
+        # underscores survive slugging -- so every multi-word setting linked
+        # to a section that does not exist: 8 of the 11 were dead, and the 3
+        # that worked were the single-word names, by coincidence.
+        #
+        # Every setting name is already lowercase with no punctuation, so the
+        # slug is the name unchanged. Deriving it from `name` rather than
+        # transforming it keeps the link and the `### {name}` heading below
+        # correct by construction instead of by agreement.
+        out.append(f"| [`{name}`](#{name}) "
                    f"| `{json.dumps(k.default)}` | `{k.env}` |")
     out.append("")
 
