@@ -4,6 +4,13 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.14] - 2026-08-28
+
+### Fixed
+- **`ccs seed migrate <file>` was applying the whole payload.** The verb takes the payload's newer version of one starter file and proves that one file survived intact -- but underneath it ran an unrestricted apply, so every other entry was copied and every absent starter seeded too, silently and unreported. Measured on a three-entry fixture: migrating `CLAUDE.md` also wrote `NOTES.md` and a skills file nothing had asked for. It matters most in the seed walk, where working through several starter files one keystroke at a time meant a full apply per keystroke. The verb now touches only the entry it names.
+- `ccs apply --dry-run` no longer prints "backed up to None" for each retired file. A preview has no backup directory yet, and the line was interpolating one anyway -- on a real migration that read as a broken tool across 23 files. The preview now says the file *would be* moved, and names the directory it would be created under, which it previously never did.
+- The backup directory is named once, in the summary line, rather than repeated on every removed file. The same run printed the identical path 23 times before printing it again at the end.
+
 ## [0.5.13] - 2026-08-28
 
 ### Added
@@ -359,7 +366,7 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.13...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.14...HEAD
 [0.5.8]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.5...v0.5.6

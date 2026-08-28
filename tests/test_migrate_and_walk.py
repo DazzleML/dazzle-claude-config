@@ -389,3 +389,39 @@ def test_no_user_facing_string_still_says_the_pre_rename_verb():
             if stale.search(line):
                 offenders.append(f"{py.name}:{n}: {line.strip()}")
     assert not offenders, "stale pre-rename verb still reachable:\n" + "\n".join(offenders)
+
+
+# -- migrate touches ONE entry -------------------------------------------------
+
+def test_migrating_one_file_does_not_apply_the_whole_payload(world, capsys):
+    """`reseed=` chooses which seeded file is taken; it does NOT limit which
+    entries run. Without `only=`, `ccs seed migrate CLAUDE.md` was a full
+    apply of the entire payload behind a verb that reports one file and
+    proves one file.
+
+    This fixture has always had the shape that exposes it -- two seed entries,
+    with live holding only CLAUDE.md -- so NOTES.md was being seeded on every
+    migration, unreported, and no test looked. Found by a refactor review of
+    migrate.py, then reproduced before the fix and again after.
+
+    The seed walk is what makes it matter: N keystrokes became N full applies.
+    """
+    notes = world["live"] / "NOTES.md"
+    assert not notes.exists(), "fixture precondition: live starts without it"
+
+    main(_ccs(world, "seed", "migrate", "CLAUDE.md"))
+
+    assert (world["live"] / "CLAUDE.md").read_bytes() == NEW, \
+        "the named file must still be migrated"
+    assert not notes.exists(), (
+        "migrating CLAUDE.md must not seed NOTES.md -- the verb names one "
+        "file and must write one file")
+
+
+def test_migrate_still_reports_and_proves_only_the_named_file(world, capsys):
+    """The scoping must not have narrowed what migrate VERIFIES. Its whole
+    value is the proof that both copies still hold the pre-migration bytes."""
+    main(_ccs(world, "seed", "migrate", "CLAUDE.md"))
+    out = capsys.readouterr().out
+    assert "CLAUDE.md" in out
+    assert "NOTES.md" not in out, f"nothing should mention the other entry:\n{out}"

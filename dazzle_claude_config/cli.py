@@ -2458,16 +2458,26 @@ def main(argv: list[str] | None = None) -> int:
                 # byte-for-byte either way, so nothing was lost -- but a
                 # person whose edited file vanished had no way to learn from
                 # this line that their edit had even been there.
+                # The DIRECTORY is named once, by the `backups:` footer below
+                # -- not on every line. A real migration staged 23 files and
+                # printed the same 70-character path 23 times, then printed it
+                # again at the end. And under --dry-run there is no directory
+                # yet, so `{r.backup_dir}` rendered the word "None" on all 23,
+                # which reads as a bug in the tool rather than as a preview.
                 if rel in edited_away:
                     print(f"{c('yellow', 'removed')}: {rel} "
                           + c("bold_yellow", "-- retired upstream, and YOUR "
                                              "EDITS went with it")
                           + c("dim", f' because sync_removals is "all"; the '
-                                     f"full copy is in {r.backup_dir}"))
+                                     f"full copy {'would be' if args.dry_run else 'is'} "
+                                     f"in the backup directory"))
                 else:
                     print(f"{c('yellow', 'removed')}: {rel} "
                           + c("dim", "-- retired upstream, your copy was "
-                                     f"unmodified; backed up to {r.backup_dir}"))
+                                     "unmodified; "
+                                     + ("would be moved to the backup directory"
+                                        if args.dry_run else
+                                        "moved to the backup directory")))
             for rel in r.removals_kept:
                 print(f"{c('yellow', 'kept')}: {rel} "
                       + c("dim", "-- retired upstream, but YOUR copy differs "
@@ -2488,6 +2498,17 @@ def main(argv: list[str] | None = None) -> int:
                 print(c("bold_red", "ERROR") + f": {m} -- entry skipped, fix the live tree")
             if r.backup_dir:
                 print(c("dim", f"backups: {r.backup_dir}"))
+            elif args.dry_run and (r.removals_staged or r.copied):
+                # A preview that says files would be "moved to the backup
+                # directory" and never says WHICH is only half a preview. The
+                # run-specific timestamped folder does not exist yet, so name
+                # the root it would be created under.
+                #
+                # `backups`, NOT the free backup_root(): that one resolves
+                # from the real home and ignores --user-claude, so a scratch
+                # run would print the operator's actual backup path. The same
+                # trap already cost six real artifacts in a checklist run.
+                print(c("dim", f"backups would go under: {backups}"))
             if args.only and r.only_matched == 0:
                 _warn_only_miss(args, manifest, box)
             rs = getattr(args, "reseed", None)

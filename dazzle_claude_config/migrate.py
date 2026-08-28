@@ -116,8 +116,18 @@ def reseed_migration(manifest: Manifest, checkout: Path, roots: dict,
     keep_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(live, keep)          # deliberately NOT BackupSession
 
+    # SCOPED to the one entry being migrated. `reseed=` chooses which seeded
+    # file gets taken; it does NOT limit which entries run. Without `only=`
+    # this was a full apply of the whole payload behind a verb that reports
+    # "migrated <one file>" and proves exactly that one file -- measured on a
+    # three-entry fixture, migrating CLAUDE.md also wrote NOTES.md and
+    # skills/a.md. The seed walk makes that N full applies for N keystrokes.
+    #
+    # `only_scope(entry.repo, entry.repo)` is (True, None) -- the whole entry,
+    # and nothing else (syncmap.py:145).
     r = apply(manifest, checkout, roots, backup_root, repo=repo,
-              dry_run=False, box_tags=box_tags, reseed=entry.target)
+              dry_run=False, box_tags=box_tags, reseed=entry.target,
+              only=entry.repo)
     result.reseeded = entry.target in r.reseeded
     if not result.reseeded:
         why = next((f"{p}: {e}" for p, e in r.failed if p == entry.target),

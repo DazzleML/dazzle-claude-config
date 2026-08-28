@@ -308,3 +308,47 @@ def test_the_result_separates_edited_removals_from_ordinary_ones(world):
                         sync_removals="all")
     assert "skills/retired.md" in r.removals_staged
     assert "skills/retired.md" in r.removals_staged_edited
+
+
+# -- what a PREVIEW is allowed to say ------------------------------------------
+
+def test_dry_run_never_prints_the_word_None_for_a_backup_path(world, capsys):
+    """Found on a real migration: `--dry-run` staged nothing, so there was no
+    backup directory yet, and the per-file line interpolated it anyway --
+    printing "backed up to None" on all 23 retired files. A preview that says
+    None reads as a broken tool, not as a preview.
+    """
+    main(_ccs(world, "apply", "--dry-run"))
+    out = capsys.readouterr().out
+    assert "removed" in out, out
+    assert "None" not in out, (
+        "a dry run has no backup directory yet; do not interpolate it\n" + out)
+    assert "would be moved to the backup directory" in out, out
+
+
+def test_dry_run_says_WHERE_the_backup_would_go(world, capsys):
+    """Half a preview is worse than none: telling someone their file would be
+    moved "to the backup directory" without naming it leaves them unable to
+    check. The timestamped folder does not exist yet, so the root is named."""
+    main(_ccs(world, "apply", "--dry-run"))
+    out = capsys.readouterr().out
+    assert "backups would go under:" in out, out
+    assert str(world["user"]) in out, (
+        "the path must honour --user-claude, not resolve from the real home "
+        "-- a scratch run naming the operator's real backups is the trap that "
+        "already cost six real artifacts\n" + out)
+
+
+def test_the_removal_line_does_not_repeat_the_backup_path_per_file(
+        world, capsys):
+    """A real run staged 23 files and printed the same 70-character path 23
+    times, then printed it again in the footer. The directory is named once."""
+    main(_ccs(world, "apply"))
+    out = capsys.readouterr().out
+    assert "backups:" in out, out
+    # The footer names it; the per-file line must not.
+    removal_lines = [ln for ln in out.splitlines() if ln.startswith("removed:")]
+    assert removal_lines, out
+    for ln in removal_lines:
+        assert r"backups\ccs" not in ln and "backups/ccs" not in ln, (
+            f"the backup path belongs in the footer, not on every line:\n{ln}")
