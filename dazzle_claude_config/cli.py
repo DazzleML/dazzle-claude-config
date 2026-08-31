@@ -939,6 +939,12 @@ day to day, once it is installed:
             sp.add_argument("--no-launch", action="store_true",
                             help="produce and validate the merged file without "
                                  "opening a diff tool")
+            sp.add_argument("--relaunch", action="store_true",
+                            help="reopen your diff tool even for files whose "
+                                 "merged output you already edited. Off by "
+                                 "default because most tools treat that file "
+                                 "as output only and would regenerate it, "
+                                 "discarding your work")
         if verb in ("merge", "diff"):
             sp.add_argument("--base-file", default=None, metavar="FILE",
                             help="use FILE as the common ancestor instead of "
@@ -2553,6 +2559,7 @@ def main(argv: list[str] | None = None) -> int:
             r = merge.run(manifest, checkout, roots, tool=args.tool,
                           dry_run=args.dry_run, accept=args.accept, only=args.only,
                           union=args.union, launch_tool=not args.no_launch,
+                          relaunch=args.relaunch,
                           preview=args.preview, base_mode=args.base,
                           base_override=blob, base_label=label,
                           cod_ratio=args.block_swap_ratio)
@@ -2586,7 +2593,22 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{c('cyan', 'previewed')}: {item.label} "
                       + c("dim", "-- nothing validated, nothing installed"))
             for item in r.resumed:
-                print(f"{c('dim', 'resumed')} {item.label} -- kept your prior edits")
+                # Claims only what the bytes prove: the file differs from the
+                # seed ccs generated. Whether a HUMAN made it differ is an
+                # inference this line must not state as fact -- a tool-saved
+                # pane also reads as "edited" (the resume record owns that).
+                print(f"{c('dim', 'resumed')} {item.label} "
+                      + c("dim", "-- differs from the generated seed; "
+                                 "keeping it as yours"))
+            if r.resumed and not args.no_launch and not args.relaunch:
+                # "Why didn't my tool open?" is the immediate next question,
+                # and leaving it unanswered reads as a failure rather than a
+                # deliberate refusal to destroy work.
+                print(c("dim", f"  ({render.n_files(len(r.resumed))} not "
+                               f"reopened: your tool is handed the merged file "
+                               f"as its OUTPUT and would regenerate it over "
+                               f"your edits. ")
+                      + c("bold", "--relaunch") + c("dim", " opens them anyway.)"))
             loss_by_item = {id(i): v for i, v in r.accepted_with_loss}
             honoured_by_item = {id(i): v for i, v in r.honoured}
             adopted = {id(i) for i in r.adopted}
@@ -2606,6 +2628,37 @@ def main(argv: list[str] | None = None) -> int:
                     n = sum(len(x) for x in v.lost.values())
                     print(c("yellow", f"    with {n} line(s) dropped on your say-so "
                                       "(no base; you reviewed the file)"))
+            if r.resolved and not args.accept:
+                # The unresolved branch below offers `--ai` when you are stuck.
+                # This branch offered NOTHING: it announced "merged (not
+                # installed)" and stopped, never naming the flag that installs.
+                # A maintainer edited the .merged files, re-ran, saw the same
+                # "(not installed)" line, and concluded their edits were being
+                # ignored -- they were not, and the run said so, but with no
+                # way forward the only reading left was that it was stuck.
+                #
+                # Both halves matter: the verb that installs, and the fact that
+                # re-running is SAFE. Someone who thinks a re-run discards
+                # their work will not re-run to find out.
+                # `--no-launch` is part of the recommendation whenever the tool
+                # would otherwise open: without it, accepting REOPENS every
+                # unresumed file and the tool regenerates its output pane, so
+                # the command offered to install your work would replace it.
+                install = ("ccs merge --accept" if args.no_launch
+                           else "ccs merge --accept --no-launch")
+                print(c("bold_yellow", f"{render.n_files(len(r.resolved))} "
+                                       f"merged, waiting for you") +
+                      c("dim", " -- read the .merged file(s) in the workspace "
+                               "below and edit them if you want, then ")
+                      + c("bold", install)
+                      + c("dim", " installs them into your live config. "
+                                 "Re-running keeps your edits and re-checks "
+                                 "them, so it is safe to look twice."))
+                if len(r.resolved) > 3:
+                    print(c("dim", "  a long list is not one sitting: ")
+                          + c("bold", "--only <path>")
+                          + c("dim", " does one file, and stopping is safe -- "
+                                     "what you have finished is kept."))
             for item, v in r.unresolved:
                 print(f"{c('bold_red', 'NOT INSTALLED')} {item.label}")
                 for f in v.failures:

@@ -1041,7 +1041,7 @@ def workspace_for(roots: dict[str, Path]) -> Path:
 def run(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
         tool: str | None = None, dry_run: bool = False, accept: bool = False,
         only: str | None = None, probes: dict[str, str] | None = None,
-        union: bool = False, launch_tool: bool = True,
+        union: bool = False, launch_tool: bool = True, relaunch: bool = False,
         preview: bool = False, base_mode: str = "auto",
         confirm_loss=None, base_override: bytes | None = None,
         base_label: str = "", cod_ratio: float | None = None) -> MergeResult:
@@ -1117,7 +1117,22 @@ def run(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
             stamp.write_bytes(merged.read_bytes())
         else:
             res.resumed.append(item)          # human edits present: keep them
-        if launch_tool:
+        # DO NOT reopen a file we just decided to resume. The merge tool is
+        # handed `merged` as its OUTPUT pane, and the common ones treat that
+        # as a destination rather than an input: BeyondCompare's documented
+        # form is `bcomp <Left> <Right> <Center> <Output>`, its complete list
+        # of Merge Options has no switch to load an existing output, and it
+        # was MEASURED regenerating the pane from the three inputs over a
+        # maintainer's saved edits.
+        #
+        # So relaunching destroys exactly what resuming preserved, and the
+        # report said "kept your prior edits" while the tool discarded them.
+        # It also breaks the resume story the rest of this function is built
+        # on: a person merging a hundred files could never stop and continue,
+        # because every re-run reopened -- and therefore re-created -- the
+        # work already done. `--relaunch` opts back in for a tool that does
+        # honour the output pane.
+        if launch_tool and (relaunch or item not in res.resumed):
             launch(resolved_tool, item, merged, item.base or empty,
                    wait=not preview)
         if preview:

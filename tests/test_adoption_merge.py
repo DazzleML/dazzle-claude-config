@@ -373,3 +373,189 @@ def test_union_with_a_supplied_base_is_refused(world):
 def test_lines_of_ignores_a_utf8_bom():
     assert bf.lines_of(b"\xef\xbb\xbf# Config\nx\n")[0] == "# Config"
     assert bf.lines_of(b"# Config\r\nx\r\n") == ["# Config", "x", ""]
+
+
+# -- a merge that is waiting on you must say what it is waiting FOR ------------
+
+def test_a_merge_awaiting_accept_names_the_flag_that_installs(world, capsys):
+    """The unresolved branch offers `--ai` when you are stuck. The resolved
+    branch offered nothing: it printed "merged (not installed)" and stopped,
+    never naming `--accept`.
+
+    Found by the maintainer, who edited the .merged files, re-ran, saw the
+    same "(not installed)" line and concluded ccs was ignoring their edits. It
+    was not -- the run even said "resumed ... kept your prior edits" -- but
+    with no next step offered, "stuck" was the only reading left.
+    """
+    manifest, co, roots, base_file = world
+    main(_argv(co, roots, "merge", "--only", "dotclaude/CLAUDE.md",
+               "--base-file", str(base_file), "--no-launch"))
+    _resolve_mechanically(merge.workspace_for(roots) / "CLAUDE.md.merged")
+    capsys.readouterr()
+
+    main(_argv(co, roots, "merge", "--only", "dotclaude/CLAUDE.md",
+               "--base-file", str(base_file), "--no-launch"))
+    out = capsys.readouterr().out
+
+    assert "merged (not installed)" in out, out
+    assert "ccs merge --accept" in out, (
+        "the tool must name the verb that installs; without it the only "
+        f"reading is that the merge is stuck\n{out}")
+
+
+def test_it_also_says_that_re_running_is_safe(world, capsys):
+    """The other half, and the one that would actually have prevented the
+    confusion. Someone who believes a re-run discards their edits will not
+    re-run to find out that it does not."""
+    manifest, co, roots, base_file = world
+    main(_argv(co, roots, "merge", "--only", "dotclaude/CLAUDE.md",
+               "--base-file", str(base_file), "--no-launch"))
+    _resolve_mechanically(merge.workspace_for(roots) / "CLAUDE.md.merged")
+    capsys.readouterr()
+    main(_argv(co, roots, "merge", "--only", "dotclaude/CLAUDE.md",
+               "--base-file", str(base_file), "--no-launch"))
+    out = capsys.readouterr().out
+    assert "keeps your edits" in out, out
+
+
+def test_the_hint_is_absent_once_you_HAVE_accepted(world, capsys):
+    """The guard. A hint that appears after it has been acted on is noise, and
+    noise is how a useful line stops being read."""
+    manifest, co, roots, base_file = world
+    main(_argv(co, roots, "merge", "--only", "dotclaude/CLAUDE.md",
+               "--base-file", str(base_file), "--no-launch"))
+    _resolve_mechanically(merge.workspace_for(roots) / "CLAUDE.md.merged")
+    capsys.readouterr()
+    main(_argv(co, roots, "merge", "--only", "dotclaude/CLAUDE.md",
+               "--base-file", str(base_file), "--no-launch", "--accept"))
+    out = capsys.readouterr().out
+    assert "merged and installed" in out, out
+    assert "--accept" not in out, f"do not offer a flag already used:\n{out}"
+
+
+# -- resuming must not reopen the tool that would undo it ----------------------
+
+def _spy_launch(monkeypatch):
+    """Record every launch() call instead of starting a GUI."""
+    calls = []
+    monkeypatch.setattr(merge, "launch",
+                        lambda *a, **k: calls.append(a[1].label) or 0)
+    return calls
+
+
+def test_a_resumed_file_is_NOT_reopened_in_the_merge_tool(world, capsys,
+                                                          monkeypatch):
+    """The tool is handed the merged file as its OUTPUT pane, and the common
+    ones treat that as a destination rather than an input -- BeyondCompare's
+    documented form is `bcomp <Left> <Right> <Center> <Output>` and its whole
+    Merge Options list has no switch to load an existing output.
+
+    Measured on a real box: BC regenerated the pane from the three inputs over
+    a maintainer's saved edits, so ccs reported "kept your prior edits" while
+    the tool discarded them, every run. Relaunching destroys exactly what
+    resuming preserved.
+    """
+    manifest, co, roots, base_file = world
+    calls = _spy_launch(monkeypatch)
+
+    merge.run(manifest, co, roots, only="dotclaude/CLAUDE.md",
+              base_override=base_file.read_bytes(), base_label="file:a")
+    assert calls, "the first pass seeds and SHOULD open the tool"
+
+    _resolve_mechanically(merge.workspace_for(roots) / "CLAUDE.md.merged")
+    calls.clear()
+    r = merge.run(manifest, co, roots, only="dotclaude/CLAUDE.md",
+                  base_override=base_file.read_bytes(), base_label="file:a")
+
+    assert r.resumed, "the edited file must be recognised as resumed"
+    assert calls == [], (
+        f"a resumed file must not be reopened -- the tool would regenerate "
+        f"its output pane and discard the edits: {calls}")
+
+
+def test_relaunch_opts_back_in(world, monkeypatch):
+    """For a tool that DOES honour the output pane, reopening must stay
+    possible -- the default protects work, it does not remove a choice."""
+    manifest, co, roots, base_file = world
+    calls = _spy_launch(monkeypatch)
+    merge.run(manifest, co, roots, only="dotclaude/CLAUDE.md",
+              base_override=base_file.read_bytes(), base_label="file:a")
+    _resolve_mechanically(merge.workspace_for(roots) / "CLAUDE.md.merged")
+    calls.clear()
+    merge.run(manifest, co, roots, only="dotclaude/CLAUDE.md", relaunch=True,
+              base_override=base_file.read_bytes(), base_label="file:a")
+    assert calls, "--relaunch must reopen the tool"
+
+
+def test_the_edits_survive_a_re_run_untouched(world, monkeypatch):
+    """The property the whole fix exists for, asserted on BYTES rather than on
+    the absence of a call: stop, come back, and your work is still there.
+
+    The stand-in tool REGENERATES its output pane, because that is what the
+    real one does. Two earlier versions of this test could not fail:
+
+      * the first used a spy that only RECORDED the call, so nothing was ever
+        destroyed and the assertion was vacuous;
+      * the second made the spy destructive but ran it BEFORE the edit, so
+        `mine` ended up being the spy's own constant -- overwriting it with
+        that same constant is invisible.
+
+    Hence the shape below: seed with the tool OFF, do the work, and only then
+    put a destructive tool in play. `mine` is now content the spy could never
+    produce, so if a resumed file is reopened the bytes must change.
+    """
+    manifest, co, roots, base_file = world
+
+    # 1. Seed with no tool at all, then do the work. `mine` is a real
+    #    resolution of real conflict markers.
+    merge.run(manifest, co, roots, only="dotclaude/CLAUDE.md", launch_tool=False,
+              base_override=base_file.read_bytes(), base_label="file:a")
+    merged = merge.workspace_for(roots) / "CLAUDE.md.merged"
+    _resolve_mechanically(merged)
+    mine = merged.read_bytes()
+    assert b"WHAT THE TOOL COMPUTED" not in mine
+
+    # 2. NOW put a tool in play that regenerates its output pane.
+    def regenerating_tool(_tool, _item, out, _base, **_kw):
+        out.write_bytes(b"WHAT THE TOOL COMPUTED, not what you saved\n")
+        return 0
+
+    monkeypatch.setattr(merge, "launch", regenerating_tool)
+
+    for _ in range(3):        # a person coming back more than once
+        merge.run(manifest, co, roots, only="dotclaude/CLAUDE.md",
+                  base_override=base_file.read_bytes(), base_label="file:a")
+        assert merged.read_bytes() == mine, (
+            "a re-run must leave the merged file byte-identical")
+
+
+def test_the_resumed_line_says_why_the_tool_did_not_open(world, capsys):
+    """"Why didn't my tool open?" is the immediate next question. Unanswered,
+    a deliberate refusal reads as a failure."""
+    manifest, co, roots, base_file = world
+    main(_argv(co, roots, "merge", "--only", "dotclaude/CLAUDE.md",
+               "--base-file", str(base_file), "--no-launch"))
+    _resolve_mechanically(merge.workspace_for(roots) / "CLAUDE.md.merged")
+    capsys.readouterr()
+    main(_argv(co, roots, "merge", "--only", "dotclaude/CLAUDE.md",
+               "--base-file", str(base_file)))
+    out = capsys.readouterr().out
+    assert "not reopened" in out, out
+    assert "--relaunch" in out, out
+
+
+def test_the_install_hint_does_not_recommend_a_command_that_reopens(
+        world, capsys):
+    """The hint added earlier said `ccs merge --accept`. With the tool live
+    that REOPENS every unresumed file, so the command offered to install your
+    work would have regenerated it first."""
+    manifest, co, roots, base_file = world
+    main(_argv(co, roots, "merge", "--only", "dotclaude/CLAUDE.md",
+               "--base-file", str(base_file), "--no-launch"))
+    _resolve_mechanically(merge.workspace_for(roots) / "CLAUDE.md.merged")
+    capsys.readouterr()
+    main(_argv(co, roots, "merge", "--only", "dotclaude/CLAUDE.md",
+               "--base-file", str(base_file)))
+    out = capsys.readouterr().out
+    assert "ccs merge --accept --no-launch" in out, (
+        "with a tool in play the hint must include --no-launch\n" + out)

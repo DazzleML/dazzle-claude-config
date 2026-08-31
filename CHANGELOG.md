@@ -4,6 +4,16 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.15] - 2026-08-31
+
+### Fixed
+- **`ccs merge` no longer reopens a file you already resolved -- which was destroying the resolution it had just promised to keep.** The tool is handed the merged file as its *output* pane, and the common merge tools (BeyondCompare's documented behavior, identical in BC4 and BC5) regenerate that pane from the three inputs on every load, discarding whatever the file held. So a re-run correctly detected your saved work, reported it kept, then launched the tool over it -- and the whole "stop partway and come back later" workflow was impossible, because every re-run re-created the work already done. Resumed files are now left closed; a new `--relaunch` flag opts back in for tools that do load their output pane (vimdiff does).
+- When files are held closed, the output says why -- "your tool is handed the merged file as its OUTPUT and would regenerate it over your edits" -- and names `--relaunch`, so the missing window reads as a deliberate refusal rather than a failure.
+- The install hint after a resumed run now says `ccs merge --accept --no-launch`: plain `--accept` still launches the tool, which would regenerate and install *its* merge instead of yours. That distinction cost a real evening before it was written down.
+
+### Changed
+- The resumed line now claims only what the bytes prove: "differs from the generated seed; keeping it as yours" rather than "kept your prior edits" -- whether a human made the file differ is an inference, and a tool-saved pane reads the same as a hand edit. Telling those apart is the resume record's job, tracked separately.
+
 ## [0.5.14] - 2026-08-28
 
 ### Fixed
@@ -366,7 +376,14 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.14...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.15...HEAD
+[0.5.15]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.14...v0.5.15
+[0.5.14]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.13...v0.5.14
+[0.5.13]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.12...v0.5.13
+[0.5.12]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.11...v0.5.12
+[0.5.11]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.10...v0.5.11
+[0.5.10]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.9...v0.5.10
+[0.5.9]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.8...v0.5.9
 [0.5.8]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.5...v0.5.6
