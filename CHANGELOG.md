@@ -4,6 +4,16 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.16] - 2026-09-01
+
+### Added
+- **ccs now knows what each merge tool does with a file you already resolved.** Whether reopening a tool over an existing merge result preserves it is a fact about the tool -- vimdiff shows what is on disk, BeyondCompare regenerates its output pane from the three inputs and discards it -- and until now nothing in ccs had that written down. A packaged registry (`merge-tools.json`) declares it per tool: `preloads`, `writes-only`, or an injection profile for tools ccs will be able to paint a result back into. A tool configured under any name (`bc2`, `bc5`, `beyond`, whatever your git config calls it) is classified by the binary it runs, since one name can point at two versions -- and a tool nobody has classified is treated as the safe case, never as an error. The registry ships as package data and is proven present inside the built wheel, the same guard the settings explanations have; if it ever fails to load, ccs falls back to a built-in table that a test holds identical, so a packaging slip can cost profiles but never change a reopen decision. Nothing in the merge flow reads the table yet -- that is the next release; this one makes the knowledge exist and ship.
+- **`docs/walkthrough.md`**: a first machine from nothing, the payload choices, the `CLAUDE.md` choice (a plain file of your own is fully supported -- nothing forces the layered template), a second machine, and a box that forked before the payload existed -- with an observable outcome at every step so the page doubles as a test. Linked from the README.
+- The merge-tool probe scripts gained the launch-then-locate experiment (`p1_*`) that measured how BeyondCompare behaves when a file it already has open is launched again: a second, hidden session appears and its close-time save prompt would overwrite the saved work. The results file is the design input for the injection driver.
+
+### Fixed
+- The injection proof-of-concept script no longer writes a space to the clipboard when the clipboard was empty before it ran; an empty clipboard is restored by clearing it.
+
 ## [0.5.15] - 2026-08-31
 
 ### Fixed
@@ -376,7 +386,8 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.15...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.16...HEAD
+[0.5.16]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.15...v0.5.16
 [0.5.15]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.14...v0.5.15
 [0.5.14]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.13...v0.5.14
 [0.5.13]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.12...v0.5.13

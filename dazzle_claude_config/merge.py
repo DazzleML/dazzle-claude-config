@@ -515,6 +515,160 @@ BUILTIN_TOOLS: dict[str, str] = {
 }
 
 
+# What a tool does with an EXISTING output file when it is handed one as
+# $MERGED. This is a fact about the tool and is DECLARED, never inferred from
+# the command string: a bare positional "$MERGED" says nothing -- BeyondCompare
+# takes exactly that and regenerates its output pane from the three inputs on
+# every load (measured; documented identically for BC4 and BC5), so reopening
+# a file a person already resolved destroys the resolution. The tiers, in
+# preference order; the floor is always available:
+#
+#   preloads        the tool shows the existing $MERGED  -- reopening is safe
+#   preloads-with   the tool needs a documented flag to  -- no confirmed member yet
+#   inject:<name>   ccs paints the content in after launch (profile <name>;
+#                   Windows) -- declared here only once the driver ships
+#   writes-only     the tool regenerates $MERGED -- a resumed file stays closed
+#   unknown         not in this table: treated as writes-only, and the name
+#                   to ask the person about
+#
+# A tool name absent here but present in git's mergetool.<name>.cmd is
+# `unknown`, not an error -- the launch still works; only the reopen decision
+# falls to the floor.
+RESUME_PRELOADS = "preloads"
+RESUME_PRELOADS_WITH = "preloads-with"
+RESUME_WRITES_ONLY = "writes-only"
+RESUME_UNKNOWN = "unknown"
+RESUME_INJECT_PREFIX = "inject:"
+
+# The fallback table, used when the packaged registry cannot be read. It must
+# say the same thing as the registry's `tools` (a test holds them equal), so a
+# packaging slip downgrades ccs to *unexplained profiles*, never to a wrong
+# reopen decision.
+_BUILTIN_RESUME: dict[str, str] = {
+    "vimdiff": RESUME_PRELOADS,       # vim opens $MERGED as a buffer: what is there is shown
+    "nvimdiff": RESUME_PRELOADS,
+    "meld": RESUME_WRITES_ONLY,       # --output is a destination
+    "kdiff3": RESUME_WRITES_ONLY,     # -o is a destination
+    "bc": RESUME_WRITES_ONLY,         # git's own name for BeyondCompare (the only bc-* it ships)
+}
+
+# A configured tool can be called anything (`merge.tool = bc` here points at
+# BC5's BComp.exe while `diff.tool = bc` points at BC4's BCompare.exe), so a
+# name list is always incomplete. The behaviour belongs to the BINARY: when a
+# name is not in the table, classify by the executable's basename, lower-cased,
+# extension dropped. Measured for bcomp/bcompare (BC4 and BC5 alike).
+_BUILTIN_EXE_RESUME: dict[str, str] = {
+    "bcomp": RESUME_WRITES_ONLY,
+    "bcompare": RESUME_WRITES_ONLY,
+    "vim": RESUME_PRELOADS,
+    "nvim": RESUME_PRELOADS,
+    "meld": RESUME_WRITES_ONLY,
+    "kdiff3": RESUME_WRITES_ONLY,
+}
+
+RESUME_TIERS = frozenset({RESUME_PRELOADS, RESUME_PRELOADS_WITH, RESUME_WRITES_ONLY})
+
+#: The shipped registry: capabilities and injection profiles as DATA, so a
+#: tool can be classified -- or a profile corrected -- without touching
+#: Python. Same shipping contract as settings-explanations.json: package-data,
+#: proven present by scripts/check-wheel-data.py against a built wheel.
+TOOL_REGISTRY_FILE = "merge-tools.json"
+
+
+def load_tool_registry() -> tuple[dict, str | None]:
+    """Read the packaged registry. Returns ({tools, inject_profiles}, reason).
+
+    Every failure degrades rather than raising: the launch still works and
+    the reopen decision falls back to `_BUILTIN_RESUME`. `ccs doctor` shows
+    the reason, so a packaging slip is visible instead of silently costing a
+    profile.
+    """
+    import json
+    try:
+        from importlib import resources
+        raw = (resources.files("dazzle_claude_config")
+               .joinpath(TOOL_REGISTRY_FILE).read_text(encoding="utf-8"))
+    except (OSError, ModuleNotFoundError, TypeError) as exc:
+        return {}, f"{TOOL_REGISTRY_FILE} is not installed ({exc})"
+    try:
+        body = json.loads(raw)
+    except ValueError as exc:
+        return {}, f"{TOOL_REGISTRY_FILE} is not valid JSON ({exc})"
+    if not isinstance(body, dict):
+        return {}, f"{TOOL_REGISTRY_FILE}: the top level is not a JSON object"
+    tools = body.get("tools")
+    if not isinstance(tools, dict):
+        return {}, f"{TOOL_REGISTRY_FILE} has no 'tools' object"
+    profiles = body.get("inject_profiles", {})
+    if not isinstance(profiles, dict):
+        return {}, f"{TOOL_REGISTRY_FILE}: 'inject_profiles' is not an object"
+    return {"tools": {n: t for n, t in tools.items() if isinstance(t, dict)},
+            "inject_profiles": {n: p for n, p in profiles.items() if isinstance(p, dict)}}, None
+
+
+def _resume_table(registry: dict) -> dict[str, str]:
+    """The fallback overlaid by the registry's `tools` (registry wins)."""
+    table = dict(_BUILTIN_RESUME)
+    for name, rec in registry.get("tools", {}).items():
+        cap = rec.get("resume")
+        if isinstance(cap, str) and cap:
+            table[name] = cap
+    return table
+
+
+def _exe_table(registry: dict) -> dict[str, str]:
+    """The fallback overlaid by the registry's `executables` (registry wins)."""
+    table = dict(_BUILTIN_EXE_RESUME)
+    for exe, rec in registry.get("executables", {}).items():
+        cap = rec.get("resume")
+        if isinstance(cap, str) and cap:
+            table[exe.lower()] = cap
+    return table
+
+
+def _exe_key(cmd: str | None) -> str | None:
+    """`"C:/Program Files/Beyond Compare 5/BComp.exe" ...` -> `bcomp`."""
+    exe = _executable_of(cmd) if cmd else None
+    if not exe:
+        return None
+    base = Path(exe.replace("\\", "/")).name.lower()
+    for ext in (".exe", ".com", ".bat", ".cmd"):
+        if base.endswith(ext):
+            base = base[: -len(ext)]
+    return base or None
+
+
+TOOL_REGISTRY, TOOL_REGISTRY_ERROR = load_tool_registry()
+TOOL_RESUME: dict[str, str] = _resume_table(TOOL_REGISTRY)
+EXE_RESUME: dict[str, str] = _exe_table(TOOL_REGISTRY)
+INJECT_PROFILES: dict[str, dict] = TOOL_REGISTRY.get("inject_profiles", {})
+
+
+def tool_resume(name: str) -> str:
+    """The declared resume capability of a tool: by name first, then by the
+    executable its command runs (a configured tool under any name), else
+    RESUME_UNKNOWN."""
+    cap = TOOL_RESUME.get(name)
+    if cap:
+        return cap
+    exe = _exe_key(tool_command(name))
+    return EXE_RESUME.get(exe, RESUME_UNKNOWN) if exe else RESUME_UNKNOWN
+
+
+def reopen_is_safe(name: str) -> bool:
+    """True only when the tool is declared to show an existing $MERGED as-is.
+    Everything else -- including a tool nobody has classified -- is the floor:
+    a resumed file is not reopened, because the cost of being wrong is the
+    person's work."""
+    return tool_resume(name) == RESUME_PRELOADS
+
+
+def inject_profile(name: str) -> str | None:
+    """The injection profile name declared for a tool, or None."""
+    cap = tool_resume(name)
+    return cap[len(RESUME_INJECT_PREFIX):] if cap.startswith(RESUME_INJECT_PREFIX) else None
+
+
 def tool_command(name: str) -> str | None:
     """The shell line for a tool: mergetool.<name>.cmd if configured, else
     the built-in table, else None."""

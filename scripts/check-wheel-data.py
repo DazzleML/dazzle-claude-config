@@ -24,6 +24,10 @@ import zipfile
 REQUIRED = {
     "dazzle_claude_config/settings-explanations.json":
         "`ccs setup update --explain` would print nothing",
+    "dazzle_claude_config/merge-tools.json":
+        "every merge tool would fall to the built-in capability table and no "
+        "injection profile would exist -- `ccs merge --relaunch` could never "
+        "restore work into BeyondCompare",
 }
 
 

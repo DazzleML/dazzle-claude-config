@@ -1,0 +1,34 @@
+{
+  "_comment": "What each merge tool does with an EXISTING $MERGED, and how ccs may paint content into one that regenerates it. Declared facts, never inferred from the command string. Tiers: preloads | preloads-with | inject:<profile> | writes-only. `tools` is keyed by the NAME git knows (its built-ins); `executables` by the binary's basename, because a configured tool can be called anything and the behaviour belongs to the binary. A user overlay in user territory overrides entries here (merge-tools.json beside ccs-config.json).",
+  "tools": {
+    "vimdiff":  {"resume": "preloads",    "why": "vim opens $MERGED as a buffer; what is on disk is shown"},
+    "nvimdiff": {"resume": "preloads",    "why": "same as vimdiff"},
+    "meld":     {"resume": "writes-only", "why": "--output is a destination"},
+    "kdiff3":   {"resume": "writes-only", "why": "-o is a destination"},
+    "bc":       {"resume": "writes-only", "why": "git's own name for BeyondCompare (the only bc-* git ships); any other name -- bc2, bc4, bc5, beyondcompare4 -- is classified by its executable below"}
+  },
+  "executables": {
+    "bcomp":    {"resume": "writes-only", "why": "regenerates the output pane from the three inputs on every load (measured on BC5; Scooter's docs, identical for BC4)"},
+    "bcompare": {"resume": "writes-only", "why": "the GUI launcher of the same tool"},
+    "vim":      {"resume": "preloads",    "why": "opens $MERGED as a buffer"},
+    "nvim":     {"resume": "preloads",    "why": "same"},
+    "meld":     {"resume": "writes-only", "why": "--output is a destination"},
+    "kdiff3":   {"resume": "writes-only", "why": "-o is a destination"}
+  },
+  "inject_profiles": {
+    "bc5": {
+      "os": "windows",
+      "window":  {"class": "TViewForm", "title_suffix": " - Text Merge - Beyond Compare"},
+      "pane":    {"class": "TTextEditor",
+                  "landmark": {"class": "TUiRadioButton", "text": "Other"},
+                  "relation": "nearest-visible-below-landmark"},
+      "locate":  "newly-appeared-visible-exactly-one",
+      "gate":    "focus-handle-equals-resolved-pane",
+      "keys":    ["^a", "^v", "^s"],
+      "settle_ms": 400,
+      "verify":  "read-back-bytes-equal",
+      "exit_codes": {"0": "saved", "14": "conflicts-but-saved", "101": "not-saved"},
+      "measured": "BeyondCompare 5 on Windows 11, 2026-09-01, tests/one-offs/thinking/merge-tool-probe/p1_RESULTS.md"
+    }
+  }
+}

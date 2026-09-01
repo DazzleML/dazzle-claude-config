@@ -79,7 +79,9 @@ try {
     }
 }
 finally {
-    if ($null -ne $saved) { Set-Clipboard -Value $saved } else { Set-Clipboard -Value " " }
+    # Restore what was there. An EMPTY clipboard is restored by clearing it --
+    # writing " " (the first version) was a destructive "restore".
+    if ($null -ne $saved) { Set-Clipboard -Value $saved } else { [System.Windows.Forms.Clipboard]::Clear() }
     "  clipboard restored"
 }
 
