@@ -42,7 +42,7 @@ ccs apply --only dotclaude/skills --checkout-dir ~/claude/dazzle-config   # a sl
 ccs apply --checkout-dir ~/claude/dazzle-config                          # ...or the lot
 ```
 
-`--only` takes a prefix of the path *inside the repo* (the left-hand paths `ccs diff` prints) which is why it reads `dotclaude/skills` rather than `skills`. A prefix matching nothing warns rather than silently doing nothing.
+`--only` takes a prefix of the path *inside the repo* (the left-hand paths `ccs diff` prints) which is why it reads `dotclaude/skills` rather than `skills`. A prefix matching nothing warns rather than silently doing nothing. For one file there is a shorter spelling: `ccs apply think/SKILL.md` (and `merge`, `collect`) takes a path the way `ccs diff <path>` does and scopes the verb to it, listing the candidates if more than one file matches.
 
 `apply` merges into your live config rather than replacing it, backs up anything it overwrites, and treats `CLAUDE.md` as seed-if-absent (so your own memory file is never clobbered). Fork it if you want to build on it; it is designed to be forked.
 
@@ -103,7 +103,7 @@ Output is colorized on a TTY (and plain when piped, or with `--no-color` / `NO_C
 
 `ccs status --long` labels each differing file with which side moved, and how sure it is. `one-sided` means one side changed and the other still matches a commit -- safe to copy in that direction. `two-sided` means both moved, so neither verb is safe and `merge` is the answer. **`unattributed`** means ccs will not say: the file's history points one way, but the side it points at holds no lines the other side lacks, which is more consistent with that side being stale than ahead. The entry above such a file reads `direction unproven` rather than claiming everything under it is one-sided. In that case ccs names `ccs diff` -- which only reads -- instead of a verb that writes, because an honest "I cannot tell" is worth more than a confident wrong direction.
 
-`collect` and `apply` both support `--dry-run` and `--only <prefix>`. Options work before or after the verb.
+`collect` and `apply` both support `--dry-run`, `--only <prefix>`, and one file as a positional (`ccs apply think/SKILL.md`). Options work before or after the verb.
 
 When the payload **retires** a file -- deletes it deliberately -- your machine still has its copy, and what should happen depends on whether that copy is still yours. `sync_removals` in `~/claude/ccs-config.json` decides: `untouched` (the default) moves a retired file into the backup directory only when your copy still matches a committed version, so a copy you edited is reported and kept instead; `all` stages every retired file; `never` only reports. `--sync-removals` and `--no-sync-removals` override it for one run in either direction. Nothing is ever deleted in place -- a removal is a move into the backup directory. Retired files are never staged automatically from a checkout that is detached or behind its remote, because on a stale tree everything added since looks retired.
 

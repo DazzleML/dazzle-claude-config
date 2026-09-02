@@ -110,6 +110,8 @@ ccs merge --only dotclaude/CLAUDE.md --base-from <repo>@<sha>:.claude/CLAUDE.md 
 
 (`--only` is required: one ancestor is one file's. On Windows the repo path may carry a drive letter -- `C:\Users\me@52768c42:.claude/CLAUDE.md` parses; the path is whatever follows the last colon.)
 
+Anywhere `--only` names one file, the file can be given as a positional instead, the way `ccs diff` takes it: `ccs merge think/SKILL.md` is a whole-component suffix match, resolved against what differs and then the manifest, and it refuses with the candidates listed when more than one file matches. It sets the same scope `--only` would with the qualified label; give one or the other, not both.
+
 Two things tell you whether you picked the right revision: `lost` is 0, and the first lines named under `retired upstream` and `ours-del` are sections you recognise as the *other* platform's, or as genuinely retired. If a heading this box wrote shows up as "retired upstream", the ancestor never held it -- wrong revision; try an earlier one. If the table says `NO BASE` for the inferred row, that is expected: it is telling you the payload's history has nothing usable, which is why you are supplying one.
 
 ### Why the merge looks different with a supplied ancestor

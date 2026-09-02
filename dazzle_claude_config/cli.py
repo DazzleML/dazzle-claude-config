@@ -947,6 +947,11 @@ day to day, once it is installed:
                                  "upstream, instead of warning and proceeding "
                                  "(config: require_current)")
         if verb == "collect":
+            sp.add_argument("path", nargs="?", default=None,
+                            help="one file, named the way `ccs diff <path>` takes it "
+                                 "(a whole-component suffix such as think/SKILL.md; "
+                                 "ambiguity is listed, never guessed). Same scope as "
+                                 "--only with the qualified label")
             sp.add_argument("--only", default=None,
                             help="limit to one entry (dotclaude/skills), a parent of entries "
                                  "(dotclaude), or a subtree inside an entry "
@@ -956,6 +961,11 @@ day to day, once it is installed:
                                  "(default: update tracked files only, so a collect "
                                  "never publishes something you did not ask for)")
         if verb == "merge":
+            sp.add_argument("path", nargs="?", default=None,
+                            help="one file, named the way `ccs diff <path>` takes it "
+                                 "(a whole-component suffix such as think/SKILL.md; "
+                                 "ambiguity is listed, never guessed). Same scope as "
+                                 "--only with the qualified label")
             sp.add_argument("--tool", default=None,
                             help="git mergetool name (default: probe for one whose "
                                  "binary actually exists)")
@@ -1045,6 +1055,11 @@ day to day, once it is installed:
                             help="git difftool name (default: probe for one whose "
                                  "binary actually exists)")
         if verb == "apply":
+            sp.add_argument("path", nargs="?", default=None,
+                            help="one file, named the way `ccs diff <path>` takes it "
+                                 "(a whole-component suffix such as think/SKILL.md; "
+                                 "ambiguity is listed, never guessed). Same scope as "
+                                 "--only with the qualified label")
             sp.add_argument("--only", default=None,
                             help="limit to one entry (dotclaude/skills), a parent of entries "
                                  "(dotclaude), or a subtree inside an entry "
@@ -1766,66 +1781,65 @@ def _warn_only_miss(args, manifest, box) -> None:
         print(c("yellow", f"warning: --only {args.only!r} matched no manifest entries"))
 
 
-def _norm_sha(data: bytes) -> str:
-    import hashlib
-    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+def _fold_path_into_only(args, manifest, checkout, roots, box) -> int | None:
+    """`ccs merge|collect|apply <path>`: one file, named the way `ccs diff`
+    takes it.
 
+    `--only` has always matched the entry's REPO-side label, component-wise
+    (`dotclaude/skills/think/SKILL.md`), while `ccs diff <path>` resolves a
+    whole-component SUFFIX (`think/SKILL.md`) and lists the candidates when
+    several match. A positional that merely aliased `--only` would make
+    `ccs merge think/SKILL.md` warn "matched no manifest entries" in the same
+    breath that `ccs diff think/SKILL.md` works -- the inconsistency that
+    prompted this, wearing a new hat. So the positional resolves exactly as
+    `diff` does and hands the verb the qualified repo label as its scope.
 
-def _seed_findings(manifest, checkout, roots, repo, box_tags, user_claude):
-    """Per FILE seed entry, what `status` should say about it (issue #27).
-
-    States: absent (will seed) | matches | untouched-old (the payload
-    replaced a seed this box never edited -- auto-offer --reseed, no
-    question) | open (customized, no decision recorded) | kept-always |
-    kept-current (until-changed, seed unchanged) | reopened (until-changed,
-    the seed moved since the decision).
-
-    EOL-insensitive throughout: history stores LF, live Windows files are
-    CRLF; a raw comparison never matches anything (measured -- see
-    tests/one-offs/poc_seed_ancestry_probe.py).
+    Returns an exit code to stop on, else None with `args.only` set.
     """
-    from . import seeddecisions
-    from .syncmap import entry_applies, entry_bases
-    dec = seeddecisions.load(user_claude)
-    findings: list[tuple[str, str, str]] = []
-    # A seed entry can be the FALLBACK for a target a tag-gated copy entry
-    # also delivers (machine.template.md seeds boxes that machines/<name>/
-    # does not cover). Where the copy entry applies, the copy governs --
-    # asking "yours or the payload's?" about that file here would be wrong.
-    covered = {(e.territory, e.target) for e in manifest.entries
-               if e.strategy == "copy" and entry_applies(e, box_tags)}
-    for entry in manifest.seed_entries():
-        if not entry_applies(entry, box_tags):
-            continue
-        if (entry.territory, entry.target) in covered:
-            continue
-        live_base, repo_base = entry_bases(
-            entry, checkout, roots, manifest.territories)
-        if not repo_base.is_file():
-            continue    # directory seeds: per-file reporting is #28 follow-up
-        if not live_base.is_file():
-            findings.append((entry.target, "absent", live_base, repo_base))
-            continue
-        try:
-            live, seed = live_base.read_bytes(), repo_base.read_bytes()
-        except OSError:
-            continue
-        current_sha = _norm_sha(seed)
-        live_sha = _norm_sha(live)
-        if live_sha == current_sha:
-            findings.append((entry.target, "matches", live_base, repo_base))
-            continue
-        hist = repo.seed_history(entry.repo) if repo is not None else []
-        if live_sha in {sha for _c, sha in hist} - {current_sha}:
-            findings.append((entry.target, "untouched-old", live_base, repo_base))
-            continue
-        rec = dec.by_target.get(entry.target)
-        state = ("open" if rec is None else
-                 "kept-always" if rec.get("mode") == "always" else
-                 "kept-current" if rec.get("seed_blob") == current_sha else
-                 "reopened")
-        findings.append((entry.target, state, live_base, repo_base))
-    return findings, dec.errors
+    if args.verb not in ("collect", "apply", "merge"):
+        return None
+    want = getattr(args, "path", None)
+    if not want:
+        return None
+    if getattr(args, "only", None):
+        print(c("red", "error") + ": name the file as a positional OR with --only, "
+              "not both", file=sys.stderr)
+        return EXIT_ERROR
+    want = want.replace(chr(92), "/").strip("/")
+    try:
+        found = _resolve_pair(diff_all(manifest, checkout, roots, box.tags), want)
+    except AmbiguousPath as e:
+        _print_ambiguous(e)
+        return EXIT_ERROR
+    if found is not None:
+        args.only = found[3]      # the qualified repo label: what --only takes
+        return None
+    # diff_all walks copy entries only, so _resolve_pair cannot see a
+    # seed-if-absent entry -- the very file the seed refusal tells you to
+    # name (`ccs merge settings.local.json`). Reach single-file entries of
+    # any strategy through the manifest, with the same whole-component
+    # suffix rule and the same refusal to guess between two matches.
+    hits = [e for e in manifest.entries
+            if e.territory and e.target and e.repo
+            and (_suffix_match(e.target, want) or _suffix_match(e.repo, want))]
+    if len(hits) > 1:
+        _print_ambiguous(AmbiguousPath(want, [e.repo for e in hits]))
+        return EXIT_ERROR
+    if hits:
+        args.only = hits[0].repo
+        return None
+    print(c("red", "error") + f": no such file {want!r} in the manifest or the "
+          "checkout -- `ccs status` lists what there is", file=sys.stderr)
+    return EXIT_ERROR
+
+
+# The seed-state machine (issue #27) moved to seeddecisions.findings on
+# 2026-09-02 -- a pure move, so that `merge` reads the same seven states
+# `status` reports instead of planning seeded files the person already owns
+# (the modularity design's G21, third instance). These names stay bound here
+# for the status/seed verbs and the tests that call them.
+from .seeddecisions import norm_sha as _norm_sha          # noqa: E402
+from .seeddecisions import findings as _seed_findings      # noqa: E402
 
 
 # Plain words, no project jargon: these lines are read by people who have
@@ -2216,6 +2230,11 @@ def main(argv: list[str] | None = None) -> int:
         box = boxconfig.load(roots.get('USER_CLAUDE'))
         for err in box.errors:
             print(c('yellow', f'warning: box config: {err}'))
+        # `ccs merge <path>` (and collect/apply): resolve the positional into
+        # the --only scope every later step already reads, before any of them.
+        rc = _fold_path_into_only(args, manifest, checkout, roots, box)
+        if rc is not None:
+            return rc
         if args.verb == "seed":
             args._box_tags = box.tags
             return _seed_verb(args, manifest, checkout, roots, repo)
@@ -2608,6 +2627,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "merge":
             blob, label = _supplied_base(args)
             r = merge.run(manifest, checkout, roots, tool=args.tool,
+                          box_tags=box.tags, repo=repo,
                           dry_run=args.dry_run, accept=args.accept, only=args.only,
                           union=args.union, launch_tool=not args.no_launch,
                           relaunch=args.relaunch, discard=args.discard,
@@ -2739,7 +2759,7 @@ def main(argv: list[str] | None = None) -> int:
                                  "them, so it is safe to look twice."))
                 if len(r.resolved) > 3:
                     print(c("dim", "  a long list is not one sitting: ")
-                          + c("bold", "--only <path>")
+                          + c("bold", "ccs merge <path>")
                           + c("dim", " does one file, and stopping is safe -- "
                                      "what you have finished is kept."))
             for item, v in r.unresolved:

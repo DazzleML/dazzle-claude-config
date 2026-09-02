@@ -4,6 +4,17 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.18] - 2026-09-02
+
+### Added
+- **`ccs merge <path>`, `ccs apply <path>` and `ccs collect <path>` take one file the way `ccs diff <path>` always has.** `ccs merge think/SKILL.md` used to fail with *unrecognized arguments* because only `--only` existed, and `--only` wants the repo-side label (`dotclaude/skills/think/SKILL.md`). The positional resolves a whole-component suffix against what differs and then the manifest, lists the candidates instead of guessing when more than one file matches, and then scopes the verb exactly as `--only` with the qualified label would. It also reaches a seeded file (`ccs merge settings.local.json`), which the differing-set walk alone never sees. Give one form or the other; both at once is refused, and a typo is an error that says so rather than a quiet empty run.
+
+### Fixed
+- **A bare `ccs merge` no longer opens a diff tool on a seeded file you already decided to keep.** `ccs status` reports starter files (`settings.local.json`, the machine and platform templates) through the decision record and calls a kept one *yours*; `merge` never read that record, so it planned those files anyway and put you in a three-way window whose base was the empty starter and whose live side was your real file -- one wrong-side save from wiping it. Measured on a real box: status showed two drifting entries, merge did six. Now a settled seeded file is refused visibly on an unscoped run -- `refused settings.local.json -- seeded and kept-current: yours since delivery, so not merged unless you name it` -- while a seed with a decision still pending (customised with no decision recorded, or the upstream starter moved since you decided) stays mergeable, and naming the file (`ccs merge settings.local.json`, or `--only`) is taken as consent and merges it.
+
+### Changed
+- The seed-state machine `status` uses now lives in `seeddecisions`, so `status` and `merge` read one answer; the status output is unchanged. The after-merge hint reads `ccs merge <path> does one file`.
+
 ## [0.5.17] - 2026-09-01
 
 ### Added
@@ -399,7 +410,7 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.17...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.18...HEAD
 [0.5.17]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.16...v0.5.17
 [0.5.16]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.15...v0.5.16
 [0.5.15]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.14...v0.5.15

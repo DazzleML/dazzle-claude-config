@@ -44,6 +44,7 @@ from .manifest import Entry, Manifest
 from .platform_info import user_claude_dir
 from .secrets import is_denied, scan_file
 from .userconfig import not_valid_json
+from . import seeddecisions
 from .syncmap import EntryDiff, _normalize_eol, diff_all, only_scope, rel_in_scope, scope_diff
 
 # Strategies whose target is a straight copy of one repo file. Anything else
@@ -1322,8 +1323,14 @@ def run(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
         discard: bool = False, inject_mode: str = "ask", confirm_inject=None,
         preview: bool = False, base_mode: str = "auto",
         confirm_loss=None, base_override: bytes | None = None,
-        base_label: str = "", cod_ratio: float | None = None) -> MergeResult:
+        base_label: str = "", cod_ratio: float | None = None,
+        box_tags=frozenset(), repo=None) -> MergeResult:
     """Plan, seed, validate and (optionally) hand off each divergent file.
+
+    `box_tags` and `repo` feed the seed-state check below; `status` passes the
+    same two, so the two verbs read one answer. Both are optional: without
+    tags, tag-gated seeds are simply not classified (and stay planned, as
+    before); without `repo`, `untouched-old` reads as `open`.
 
     `confirm_loss(item, validation) -> bool` is asked, once per file, when a
     result with NO base fails only because lines unique to one side were
@@ -1348,6 +1355,30 @@ def run(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
             ok, sub = only_scope(only, i.entry.repo)
             return ok and rel_in_scope(i.rel, sub)
         items = [i for i in items if _reached(i)]
+
+    # A seeded file the person already owns is not merge work. `status`
+    # reports seed-if-absent entries through the seed-decision record (#27)
+    # and calls a kept one settled; until 2026-09-02 this loop never read that
+    # record, so a bare `ccs merge` planned -- and opened a diff tool on --
+    # files status had just called "yours", with the empty committed seed as
+    # the base against the person's real file: one wrong-side save from
+    # wiping it (measured on settings.local.json; the modularity design's G21,
+    # third instance). Refuse those VISIBLY, as `refused <label> -- ...`. An
+    # explicit scope (--only, or the positional) is the person naming the
+    # file and lifts the refusal; `open` and `reopened` stay mergeable --
+    # those are the states where a decision is genuinely pending.
+    if only is None and any(i.entry.strategy == "seed-if-absent" and i.mergeable
+                            for i in items):
+        states = {t: s for t, s, _live, _repo in seeddecisions.findings(
+            manifest, checkout, roots, repo, box_tags, roots.get("USER_CLAUDE"))[0]}
+        for i in items:
+            if i.entry.strategy != "seed-if-absent" or not i.mergeable or i.rel:
+                continue
+            st = states.get(i.entry.target)
+            if st in seeddecisions.SETTLED:
+                i.reason = (f"seeded and {st}: yours since delivery, so not merged "
+                            f"unless you name it (ccs merge {i.label}); "
+                            f"`ccs seed` re-asks the question")
     if base_override is not None and union:
         raise MergeError("--union keeps both sides without review, which is the opposite "
                          "of an adoption merge: a supplied base is merged conflict-on-delete "

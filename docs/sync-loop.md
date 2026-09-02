@@ -130,6 +130,8 @@ One base is one file's ancestor, so the run must be scoped to one file with `--o
 
 `--only` takes an entry (`dotclaude/skills`), a parent of entries (`dotclaude`), or a subtree or file inside an entry (`dotclaude/skills/test-mutation`, `dotclaude/skills/x/SKILL.md`), matched on whole path components -- and it scopes everything: the copy, the two-sided refusal, `--force`, and the direction skips.
 
+For one file there is a shorter spelling: `ccs merge think/SKILL.md`, `ccs apply think/SKILL.md` and `ccs collect think/SKILL.md` take a path the way `ccs diff <path>` does -- a whole-component suffix, resolved against what differs and then the manifest, with the candidates listed if more than one file matches -- and then scope the verb exactly as `--only` with the qualified label would. Give one or the other, not both.
+
 ## Checking that a step did what it said
 
 ```bash

@@ -111,3 +111,85 @@ def reset(target: str, user_claude: Path | None = None) -> bool:
     del current[target]
     _write(path, current)
     return True
+
+
+# --------------------------------------------------------------- the states
+# Moved here from cli._seed_findings on 2026-09-02 as a PURE MOVE (no
+# semantic change) so that `merge` can read the same seven states `status`
+# reports. Until then only the status verb consulted this record, and a bare
+# `ccs merge` planned -- and opened a diff tool on -- seeded files the person
+# had already decided to keep (the modularity design's G21, third instance).
+# The state machine is the classifier the modularity design's unit 2.2 will
+# fold into `ancestry.classify()`; it lives here until then.
+
+#: States in which the seeded file is settled -- the person's own, and not a
+#: pending question. `open` (customised, no decision) and `reopened` (the
+#: upstream seed moved since the decision) are the two that still ask.
+SETTLED = frozenset({"matches", "untouched-old", "kept-always", "kept-current"})
+
+
+def norm_sha(data: bytes) -> str:
+    """SHA-256 of the LF-normalised bytes: history stores LF, live Windows
+    files are CRLF, and a raw comparison never matches anything."""
+    import hashlib
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def findings(manifest, checkout, roots, repo, box_tags=frozenset(),
+             user_claude: Path | None = None):
+    """Per FILE seed entry, its state (issue #27): a list of
+    (target, state, live_path, repo_path), plus the decision file's errors.
+
+    States: absent (will seed) | matches | untouched-old (the payload
+    replaced a seed this box never edited -- auto-offer --reseed, no
+    question) | open (customized, no decision recorded) | kept-always |
+    kept-current (until-changed, seed unchanged) | reopened (until-changed,
+    the seed moved since the decision).
+
+    `repo` may be None: then `untouched-old` cannot be told from `open`
+    (it needs the seed's history), and such a file reads as `open`.
+
+    EOL-insensitive throughout (measured -- see
+    tests/one-offs/poc_seed_ancestry_probe.py).
+    """
+    from .syncmap import entry_applies, entry_bases
+    dec = load(user_claude)
+    out: list[tuple] = []
+    # A seed entry can be the FALLBACK for a target a tag-gated copy entry
+    # also delivers (machine.template.md seeds boxes that machines/<name>/
+    # does not cover). Where the copy entry applies, the copy governs --
+    # asking "yours or the payload's?" about that file here would be wrong.
+    covered = {(e.territory, e.target) for e in manifest.entries
+               if e.strategy == "copy" and entry_applies(e, box_tags)}
+    for entry in manifest.seed_entries():
+        if not entry_applies(entry, box_tags):
+            continue
+        if (entry.territory, entry.target) in covered:
+            continue
+        live_base, repo_base = entry_bases(
+            entry, checkout, roots, manifest.territories)
+        if not repo_base.is_file():
+            continue    # directory seeds: per-file reporting is #28 follow-up
+        if not live_base.is_file():
+            out.append((entry.target, "absent", live_base, repo_base))
+            continue
+        try:
+            live, seed = live_base.read_bytes(), repo_base.read_bytes()
+        except OSError:
+            continue
+        current_sha = norm_sha(seed)
+        live_sha = norm_sha(live)
+        if live_sha == current_sha:
+            out.append((entry.target, "matches", live_base, repo_base))
+            continue
+        hist = repo.seed_history(entry.repo) if repo is not None else []
+        if live_sha in {sha for _c, sha in hist} - {current_sha}:
+            out.append((entry.target, "untouched-old", live_base, repo_base))
+            continue
+        rec = dec.by_target.get(entry.target)
+        state = ("open" if rec is None else
+                 "kept-always" if rec.get("mode") == "always" else
+                 "kept-current" if rec.get("seed_blob") == current_sha else
+                 "reopened")
+        out.append((entry.target, state, live_base, repo_base))
+    return out, dec.errors
