@@ -4,6 +4,19 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.17] - 2026-09-01
+
+### Added
+- **A merge you stopped partway can be continued in your tool -- when your tool can keep the work, and now ccs knows which can.** A file you already resolved reopens by itself in a tool that shows what is on disk (vimdiff, nvimdiff), with your edits in the output window. For BeyondCompare on Windows, `ccs merge --relaunch` reopens the tool and **paints your prior work back into its output pane**: it tells you first that it will take the keyboard for about a second, asks (the new `merge_inject` setting: `ask`, `always`, `never`), then reads the saved file back to verify the paint landed. It refuses before launching if BeyondCompare already has that file open -- relaunching an open file creates a hidden second session whose save prompt would overwrite your work -- and it never sends a keystroke unless focus has verifiably landed on the pane it resolved. If the paint cannot be verified and the tool saves over the file anyway, ccs puts your bytes back before validation and says `restored`. The driver ships inside the package (a PowerShell script, no new dependency) and `ccs doctor` says whether it is usable on this box.
+- `ccs merge --relaunch --discard` is the old destructive reopen, spelled out so nobody reaches it by accident, and reported as `reopened WITHOUT your edits`.
+- Your own `merge-tools.json` beside `ccs-config.json` overrides the packaged registry -- a tool you measured differently, a profile you corrected. A malformed overlay is reported by `doctor` and ignored; it can never change a reopen decision by accident.
+- `ccs doctor` also warns when a `CLAUDE.md` of your own sits beside delivered layer files (`global.md`, `platform.md`, ...) that nothing imports -- they are unread, and the line says so once instead of leaving you to wonder why they appeared.
+- The tool's exit code is printed when it is not zero (BeyondCompare's `101` means the output was not saved).
+
+### Changed
+- The "not reopened" note after a merge now says what `--relaunch` will do for *your* tool: paint your edits back in, or open it anyway.
+- `merge.py`'s docstring no longer claims ccs has "no merge engine"; git's diff3 does the three-way, and the coming `--ai` path is a resolution workflow above it.
+
 ## [0.5.16] - 2026-09-01
 
 ### Added
@@ -386,7 +399,8 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.16...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.17...HEAD
+[0.5.17]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.16...v0.5.17
 [0.5.16]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.15...v0.5.16
 [0.5.15]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.14...v0.5.15
 [0.5.14]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.13...v0.5.14

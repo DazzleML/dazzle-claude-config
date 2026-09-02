@@ -475,8 +475,17 @@ def test_a_resumed_file_is_NOT_reopened_in_the_merge_tool(world, capsys,
 
 def test_relaunch_opts_back_in(world, monkeypatch):
     """For a tool that DOES honour the output pane, reopening must stay
-    possible -- the default protects work, it does not remove a choice."""
+    possible -- the default protects work, it does not remove a choice.
+
+    Pinned to a writes-only tool: on a box whose git config resolves to
+    BeyondCompare, `--relaunch` now takes the injection path instead (tested
+    in test_inject_flow), which is not what this test is about."""
     manifest, co, roots, base_file = world
+    monkeypatch.setattr(merge, "effective_registry",
+                        lambda user_claude=None: ({"tools": {}, "executables": {},
+                                                   "inject_profiles": {}}, []))
+    monkeypatch.setattr(merge, "resolve_tool", lambda explicit=None: "plaintool")
+    monkeypatch.setattr(merge, "tool_command", lambda name: 'plaintool "$MERGED"')
     calls = _spy_launch(monkeypatch)
     merge.run(manifest, co, roots, only="dotclaude/CLAUDE.md",
               base_override=base_file.read_bytes(), base_label="file:a")

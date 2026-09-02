@@ -1,10 +1,16 @@
 """Three-way merge orchestration -- ccs drives git and the user's diff tool.
 
-**ccs implements no merge engine and keeps no tool registry.** ``git merge-file``
-does the 3-way; ``git mergetool`` already drives ~20 tools through the
-``$LOCAL $BASE $REMOTE $MERGED`` contract. What ccs adds is the part git cannot
-know by itself: which manifest entries may be merged at all, and whether the
-result actually kept both sides' content.
+**The three-way itself is git's.** ``git merge-file`` computes the 3-way;
+``git mergetool`` already drives ~20 tools through the ``$LOCAL $BASE $REMOTE
+$MERGED`` contract, and ccs reimplements neither. What ccs adds sits above
+that engine: which manifest entries may be merged at all; whether the result
+actually kept both sides' content; since 0.5.16, what each tool does with a
+$MERGED that already holds a person's work (the capability registry below),
+which decides whether a resumed file may be reopened; and, when ``--ai``
+lands (#19), a resolution workflow for the hunks that are not a side-pick --
+deterministic classification first, a model on the residue, the same
+validation gate on the result. That workflow is a merge *process*, not a
+second diff3; the invariant below binds it exactly as it binds a hand edit.
 
 THE INVARIANT (measured three times, three different costumes -- see DWP-5):
 
@@ -33,8 +39,11 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import inject
 from .manifest import Entry, Manifest
+from .platform_info import user_claude_dir
 from .secrets import is_denied, scan_file
+from .userconfig import not_valid_json
 from .syncmap import EntryDiff, _normalize_eol, diff_all, only_scope, rel_in_scope, scope_diff
 
 # Strategies whose target is a straight copy of one repo file. Anything else
@@ -549,7 +558,11 @@ _BUILTIN_RESUME: dict[str, str] = {
     "nvimdiff": RESUME_PRELOADS,
     "meld": RESUME_WRITES_ONLY,       # --output is a destination
     "kdiff3": RESUME_WRITES_ONLY,     # -o is a destination
-    "bc": RESUME_WRITES_ONLY,         # git's own name for BeyondCompare (the only bc-* it ships)
+    # git's own name for BeyondCompare (the only bc-* it ships). It regenerates
+    # its output pane, so reopening is unsafe -- unless ccs paints the work
+    # back in, which the bc5 profile knows how to do on Windows. Elsewhere the
+    # profile does not apply and the tier is read as writes-only.
+    "bc": RESUME_INJECT_PREFIX + "bc5",
 }
 
 # A configured tool can be called anything (`merge.tool = bc` here points at
@@ -558,8 +571,8 @@ _BUILTIN_RESUME: dict[str, str] = {
 # name is not in the table, classify by the executable's basename, lower-cased,
 # extension dropped. Measured for bcomp/bcompare (BC4 and BC5 alike).
 _BUILTIN_EXE_RESUME: dict[str, str] = {
-    "bcomp": RESUME_WRITES_ONLY,
-    "bcompare": RESUME_WRITES_ONLY,
+    "bcomp": RESUME_INJECT_PREFIX + "bc5",
+    "bcompare": RESUME_INJECT_PREFIX + "bc5",
     "vim": RESUME_PRELOADS,
     "nvim": RESUME_PRELOADS,
     "meld": RESUME_WRITES_ONLY,
@@ -575,8 +588,35 @@ RESUME_TIERS = frozenset({RESUME_PRELOADS, RESUME_PRELOADS_WITH, RESUME_WRITES_O
 TOOL_REGISTRY_FILE = "merge-tools.json"
 
 
+_REGISTRY_SECTIONS = ("tools", "executables", "inject_profiles")
+
+
+def _normalize_registry(body, label: str, *, require_tools: bool) -> tuple[dict, str | None]:
+    """Shape-check a registry body into {tools, executables, inject_profiles}.
+
+    The packaged file must carry `tools` (a package without it is broken);
+    a user overlay may carry only the section it wants to override. Entries
+    that are not objects are dropped, never trusted.
+    """
+    if not isinstance(body, dict):
+        return {}, f"{label}: the top level is not a JSON object"
+    out: dict = {}
+    for section in _REGISTRY_SECTIONS:
+        part = body.get(section)
+        if part is None:
+            if section == "tools" and require_tools:
+                return {}, f"{label} has no 'tools' object"
+            out[section] = {}
+            continue
+        if not isinstance(part, dict):
+            return {}, f"{label}: '{section}' is not an object"
+        out[section] = {n: v for n, v in part.items() if isinstance(v, dict)}
+    return out, None
+
+
 def load_tool_registry() -> tuple[dict, str | None]:
-    """Read the packaged registry. Returns ({tools, inject_profiles}, reason).
+    """Read the packaged registry. Returns ({tools, executables,
+    inject_profiles}, reason).
 
     Every failure degrades rather than raising: the launch still works and
     the reopen decision falls back to `_BUILTIN_RESUME`. `ccs doctor` shows
@@ -594,16 +634,50 @@ def load_tool_registry() -> tuple[dict, str | None]:
         body = json.loads(raw)
     except ValueError as exc:
         return {}, f"{TOOL_REGISTRY_FILE} is not valid JSON ({exc})"
-    if not isinstance(body, dict):
-        return {}, f"{TOOL_REGISTRY_FILE}: the top level is not a JSON object"
-    tools = body.get("tools")
-    if not isinstance(tools, dict):
-        return {}, f"{TOOL_REGISTRY_FILE} has no 'tools' object"
-    profiles = body.get("inject_profiles", {})
-    if not isinstance(profiles, dict):
-        return {}, f"{TOOL_REGISTRY_FILE}: 'inject_profiles' is not an object"
-    return {"tools": {n: t for n, t in tools.items() if isinstance(t, dict)},
-            "inject_profiles": {n: p for n, p in profiles.items() if isinstance(p, dict)}}, None
+    return _normalize_registry(body, TOOL_REGISTRY_FILE, require_tools=True)
+
+
+#: A user's own registry, in user territory beside ccs-config.json (the
+#: ccs-box.json idiom). Same shape as the packaged file; any section may be
+#: omitted; its entries win over the packaged ones. Missing means "nothing to
+#: add"; malformed is reported for doctor and ignored -- a broken overlay must
+#: not change a reopen decision.
+USER_TOOLS_FILE = "merge-tools.json"
+
+
+def user_tools_path(user_claude: Path | None = None) -> Path:
+    """One resolver for user territory (platform_info), not a sixth `~/claude`."""
+    return user_claude_dir(str(user_claude) if user_claude else None) / USER_TOOLS_FILE
+
+
+def load_user_tool_registry(user_claude: Path | None = None) -> tuple[dict, list[str]]:
+    """({tools, executables, inject_profiles} or {}, errors).
+
+    A parse failure is phrased the way every other ccs reader phrases it
+    (`not valid JSON (...)`), never as the parser's class name (#39)."""
+    import json
+    path = user_tools_path(user_claude)
+    if not path.exists():
+        return {}, []
+    try:
+        raw = path.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        return {}, [f"{path}: cannot be read ({exc})"]
+    try:
+        body = json.loads(raw)
+    except ValueError as exc:
+        return {}, [f"{path}: {not_valid_json(exc)}"]
+    reg, reason = _normalize_registry(body, str(path), require_tools=False)
+    return (reg, []) if reason is None else ({}, [reason])
+
+
+def effective_registry(user_claude: Path | None = None) -> tuple[dict, list[str]]:
+    """The packaged registry with the user's overlay applied, per section,
+    user entries winning. Returns (registry, errors-from-the-user-file)."""
+    user, errors = load_user_tool_registry(user_claude)
+    merged = {section: {**TOOL_REGISTRY.get(section, {}), **user.get(section, {})}
+              for section in _REGISTRY_SECTIONS}
+    return merged, errors
 
 
 def _resume_table(registry: dict) -> dict[str, str]:
@@ -644,29 +718,67 @@ EXE_RESUME: dict[str, str] = _exe_table(TOOL_REGISTRY)
 INJECT_PROFILES: dict[str, dict] = TOOL_REGISTRY.get("inject_profiles", {})
 
 
-def tool_resume(name: str) -> str:
+def tool_resume(name: str, registry: dict | None = None) -> str:
     """The declared resume capability of a tool: by name first, then by the
     executable its command runs (a configured tool under any name), else
-    RESUME_UNKNOWN."""
-    cap = TOOL_RESUME.get(name)
+    RESUME_UNKNOWN. `registry` is an `effective_registry()` result; None
+    means the packaged view."""
+    if registry is None:
+        by_name, by_exe = TOOL_RESUME, EXE_RESUME
+    else:
+        by_name, by_exe = _resume_table(registry), _exe_table(registry)
+    cap = by_name.get(name)
     if cap:
         return cap
     exe = _exe_key(tool_command(name))
-    return EXE_RESUME.get(exe, RESUME_UNKNOWN) if exe else RESUME_UNKNOWN
+    return by_exe.get(exe, RESUME_UNKNOWN) if exe else RESUME_UNKNOWN
 
 
-def reopen_is_safe(name: str) -> bool:
+def reopen_is_safe(name: str, registry: dict | None = None) -> bool:
     """True only when the tool is declared to show an existing $MERGED as-is.
     Everything else -- including a tool nobody has classified -- is the floor:
     a resumed file is not reopened, because the cost of being wrong is the
     person's work."""
-    return tool_resume(name) == RESUME_PRELOADS
+    return tool_resume(name, registry) == RESUME_PRELOADS
 
 
-def inject_profile(name: str) -> str | None:
+def inject_profile(name: str, registry: dict | None = None) -> str | None:
     """The injection profile name declared for a tool, or None."""
-    cap = tool_resume(name)
+    cap = tool_resume(name, registry)
     return cap[len(RESUME_INJECT_PREFIX):] if cap.startswith(RESUME_INJECT_PREFIX) else None
+
+
+def _profile_applies(profile: dict) -> bool:
+    """A profile is for one platform; elsewhere it is documentation."""
+    want = profile.get("os")
+    if not want:
+        return True
+    here = "windows" if sys.platform == "win32" else "posix"
+    return want == here
+
+
+def inject_profile_for(name: str, registry: dict | None = None) -> tuple[str, dict] | None:
+    """(profile name, profile) when the tool declares an injection profile that
+    exists and applies on this platform; else None."""
+    pname = inject_profile(name, registry)
+    if not pname:
+        return None
+    profiles = (registry or TOOL_REGISTRY).get("inject_profiles", {}) if registry is not None \
+        else INJECT_PROFILES
+    profile = profiles.get(pname)
+    if not isinstance(profile, dict) or not _profile_applies(profile):
+        return None
+    return pname, profile
+
+
+def effective_tier(name: str, registry: dict | None = None) -> str:
+    """The tier that governs THIS run: an inject profile that does not exist
+    or does not apply here collapses to writes-only -- the floor, never a
+    silent promotion."""
+    cap = tool_resume(name, registry)
+    if cap.startswith(RESUME_INJECT_PREFIX):
+        return cap if inject_profile_for(name, registry) else RESUME_WRITES_ONLY
+    return cap
 
 
 def tool_command(name: str) -> str | None:
@@ -1118,6 +1230,17 @@ class MergeResult:
     honoured: list[tuple[MergeItem, ValidationResult]] = field(default_factory=list)
     # Supplied-base items installed live-only (the checkout stays at HEAD).
     adopted: list[MergeItem] = field(default_factory=list)
+    # -- the resume story, per tool capability (0.5.17) ------------------------
+    tool: str | None = None            # the resolved tool name, for the CLI's wording
+    tier: str | None = None            # its effective tier on this platform
+    registry_errors: list[str] = field(default_factory=list)  # user overlay problems
+    reopened: list[MergeItem] = field(default_factory=list)   # resumed, reopened: the tool preloads
+    injected: list[MergeItem] = field(default_factory=list)   # resumed, reopened, work painted back in
+    inject_refused: list[tuple[MergeItem, str]] = field(default_factory=list)  # not launched, and why
+    inject_failed: list[tuple[MergeItem, str]] = field(default_factory=list)   # launched, paint failed
+    restored: list[MergeItem] = field(default_factory=list)   # the tool saved over an unverified paint; put back
+    discarded: list[MergeItem] = field(default_factory=list)  # --relaunch --discard: reopened without the work
+    tool_exit: dict[str, int] = field(default_factory=dict)   # label -> the tool's exit code
 
 
 def two_way_labels(manifest: Manifest, checkout: Path,
@@ -1196,6 +1319,7 @@ def run(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
         tool: str | None = None, dry_run: bool = False, accept: bool = False,
         only: str | None = None, probes: dict[str, str] | None = None,
         union: bool = False, launch_tool: bool = True, relaunch: bool = False,
+        discard: bool = False, inject_mode: str = "ask", confirm_inject=None,
         preview: bool = False, base_mode: str = "auto",
         confirm_loss=None, base_override: bytes | None = None,
         base_label: str = "", cod_ratio: float | None = None) -> MergeResult:
@@ -1248,6 +1372,13 @@ def run(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
     if not mergeable:
         return res
     resolved_tool = resolve_tool(tool) if (not dry_run and launch_tool) else None
+    registry, res.registry_errors = effective_registry(roots["USER_CLAUDE"])
+    res.tool = resolved_tool
+    res.tier = effective_tier(resolved_tool, registry) if resolved_tool else None
+    # Loop-invariant: the tool does not change per item, so its profile and
+    # reopen safety are resolved once here rather than rebuilt per file.
+    prof = inject_profile_for(resolved_tool, registry) if resolved_tool else None
+    safe_reopen = reopen_is_safe(resolved_tool, registry) if resolved_tool else False
 
     for item in mergeable:
         safe = item.label.replace("/", "__").replace("\\", "__")
@@ -1284,11 +1415,29 @@ def run(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
         # It also breaks the resume story the rest of this function is built
         # on: a person merging a hundred files could never stop and continue,
         # because every re-run reopened -- and therefore re-created -- the
-        # work already done. `--relaunch` opts back in for a tool that does
-        # honour the output pane.
-        if launch_tool and (relaunch or item not in res.resumed):
-            launch(resolved_tool, item, merged, item.base or empty,
-                   wait=not preview)
+        # work already done. `--relaunch` opts back in.
+        #
+        # Since 0.5.17 the decision reads the tool's DECLARED capability:
+        #   preloads     -- reopen freely, even without --relaunch (vimdiff)
+        #   inject:<p>   -- on --relaunch, reopen and paint the work back in;
+        #                   `--discard` is the old destructive reopen, named
+        #   writes-only  -- reopen only on --relaunch (unchanged, destructive)
+        resumed_item = item in res.resumed
+        if (launch_tool and not preview and resumed_item and relaunch
+                and not discard and prof is not None):
+            rc = _inject_flow(res, item, merged, item.base or empty, resolved_tool,
+                              prof[0], prof[1], inject_mode, confirm_inject, ws)
+            if rc is not None:
+                res.tool_exit[item.label] = rc
+        elif launch_tool and (not resumed_item or relaunch or safe_reopen):
+            if resumed_item and not relaunch:
+                res.reopened.append(item)          # the tool preloads: safe
+            elif resumed_item and discard:
+                res.discarded.append(item)
+            rc = launch(resolved_tool, item, merged, item.base or empty,
+                        wait=not preview)
+            if not preview:
+                res.tool_exit[item.label] = rc
         if preview:
             # Look, do not decide. Nothing is validated and nothing is
             # installed -- this exists so a user can SEE the three sides in
@@ -1317,6 +1466,126 @@ def run(manifest: Manifest, checkout: Path, roots: dict[str, Path], *,
                 res.adopted.append(item)
         res.resolved.append(item)
     return res
+
+
+INJECT_WINDOW_WAIT_S = 20.0     # how long a launched tool may take to show its window
+INJECT_POLL_S = 0.5
+
+
+def _ask_inject_on_console(item: MergeItem, tool: str) -> bool:
+    """Default `confirm_inject`: the announced focus-steal, then a question.
+    Answered on a console only; anything else is a no -- a keystroke aimed
+    at a pane nobody can see is exactly what must never happen."""
+    _print_inject_warning(item, tool)
+    if not _console_attached(sys.stdin):
+        print("  (no console to answer on -- not injecting; the file stays closed)")
+        return False
+    try:
+        return input("  paint your prior work into the tool now? [y/N] ").strip().lower() in ("y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+
+
+def _print_inject_warning(item: MergeItem, tool: str) -> None:
+    print(f"{item.label}: ccs will open {tool} and take the keyboard for about a "
+          f"second to paint your prior work into its output pane.")
+    print("  Hands off the keyboard and mouse until the merge window shows your "
+          "text; anything typed meanwhile lands in the pane.")
+
+
+def _inject_flow(res: MergeResult, item: MergeItem, merged: Path, base: Path,
+                 tool: str, pname: str, profile: dict, inject_mode: str,
+                 confirm_inject, ws: Path) -> int | None:
+    """Reopen a resumed file in a tool that regenerates its output pane, and
+    paint the person's work back in. Returns the tool's exit code, or None
+    when nothing was launched.
+
+    The order is the safety property, not a convenience:
+      1. refuse before launching if the tool already shows this file -- a
+         relaunch of an open file creates a HIDDEN second session whose
+         close-time save prompt overwrites the work (measured, p1)
+      2. warn, then consent (a declined prompt launches nothing)
+      3. snapshot the work to a sidecar, launch, locate, paint, verify by
+         reading the saved file
+      4. in `finally` -- so Ctrl+C is covered too -- if the paint was not
+         verified and the file changed, put the sidecar back. This runs
+         BEFORE validate(): a cleanly regenerated pane can pass validation
+         and would otherwise be installed as the person's resolution.
+    """
+    def refuse(reason: str) -> None:
+        res.inject_refused.append((item, reason))
+
+    usable, why = inject.available()
+    if not usable:
+        refuse(why)
+        return None
+    if inject_mode == "never":
+        refuse("merge_inject is 'never' -- set it to 'ask' or 'always' to allow injection")
+        return None
+    snap = inject.snapshot(merged.name, profile)
+    if not snap.get("ok"):
+        refuse(f"could not inspect the tool's windows: {snap.get('reason', 'no reason')}")
+        return None
+    if snap.get("open"):
+        refuse(f"{tool} already has {merged.name} open -- close that tab first, "
+               f"then run again (relaunching an open file creates a hidden second "
+               f"session whose save prompt would overwrite your work)")
+        return None
+    if inject_mode == "always":
+        _print_inject_warning(item, tool)
+    else:
+        ask = confirm_inject or _ask_inject_on_console
+        if not ask(item, tool):
+            refuse("declined at the prompt -- the file stays closed; "
+                   "`--relaunch --discard` reopens it without your edits")
+            return None
+
+    import json as _json
+    before = ws / (merged.name + ".before.json")
+    before.write_text(_json.dumps(snap), encoding="utf-8")
+    sidecar = ws / (merged.name + ".pre-inject")
+    kept = merged.read_bytes()
+    sidecar.write_bytes(kept)
+
+    verified = False
+    rc: int | None = None
+    proc = _spawn(tool, item, merged, base)
+    try:
+        located = None
+        deadline = time.monotonic() + INJECT_WINDOW_WAIT_S
+        while time.monotonic() < deadline:
+            probe = inject.locate(merged.name, before, profile)
+            if probe.get("ok"):
+                located = probe
+                break
+            if proc.poll() is not None:            # the tool exited before showing a window
+                break
+            time.sleep(INJECT_POLL_S)
+        if located is None:
+            res.inject_failed.append((item, "the tool's output pane could not be located "
+                                            "after launch -- it is showing a regenerated merge; "
+                                            "close it WITHOUT saving"))
+        else:
+            result = inject.inject(merged.name, before, sidecar, merged, profile)
+            verified = bool(result.get("ok"))
+            if verified:
+                res.injected.append(item)
+            else:
+                res.inject_failed.append((item, f"{result.get('reason', 'not verified')} -- the tool "
+                                                f"is showing a regenerated merge; close it WITHOUT "
+                                                f"saving, or ccs will put your work back"))
+        rc = _wait_for_tool(proc)
+    finally:
+        if not verified and merged.exists() and merged.read_bytes() != kept:
+            merged.write_bytes(kept)
+            res.restored.append(item)
+        for p in (sidecar, before):
+            try:
+                p.unlink()
+            except OSError:
+                pass
+    return rc
 
 
 def _ask_loss_on_console(item: MergeItem, v: ValidationResult) -> bool:
@@ -1437,12 +1706,26 @@ def interactive() -> bool:
 
 def launch(tool: str, item: MergeItem, merged: Path, base: Path,
            wait: bool = True) -> int:
-    """Run the user's tool through git's own mergetool contract.
+    """Run the user's tool through git's own mergetool contract and, unless
+    `wait` is False, return its exit code.
 
     Never launches anything when stdout is not a TTY: a GUI on a CI runner
     hangs forever, and silently picking a side is precisely the failure this
     module exists to prevent (AC-7).
     """
+    proc = _spawn(tool, item, merged, base)
+    if not wait:
+        # Preview is "open it so I can look" -- there is nothing to come back
+        # for, so blocking the shell until the user closes a GUI is pure
+        # friction. Return immediately and leave the tool running.
+        return 0
+    return _wait_for_tool(proc)
+
+
+def _spawn(tool: str, item: MergeItem, merged: Path, base: Path) -> subprocess.Popen:
+    """Start the tool and return the process; `_wait_for_tool` collects it.
+    Split from launch() so the injection flow can act while the tool is
+    open."""
     if not interactive():
         raise MergeError(
             "no console attached -- refusing to launch an interactive merge tool "
@@ -1461,14 +1744,11 @@ def launch(tool: str, item: MergeItem, merged: Path, base: Path,
     flags = 0
     if sys.platform == "win32":
         flags = subprocess.CREATE_NEW_PROCESS_GROUP
-    proc = subprocess.Popen(line, shell=True, env=env, creationflags=flags)
+    return subprocess.Popen(line, shell=True, env=env, creationflags=flags)
 
-    if not wait:
-        # Preview is "open it so I can look" -- there is nothing to come back
-        # for, so blocking the shell until the user closes a GUI is pure
-        # friction. Return immediately and leave the tool running.
-        return 0
 
+def _wait_for_tool(proc: subprocess.Popen) -> int:
+    """Wait for a launched tool, interruptibly, and return its exit code."""
     try:
         # POLL, do not block. On Windows `Popen.wait()` sits in
         # WaitForSingleObject with an infinite timeout, and Python cannot

@@ -147,6 +147,20 @@ ccs merge --only dotclaude/CLAUDE.md --base-from <repo>@<sha>:.claude/CLAUDE.md 
 
 The longer-term fix for a box with its own sections is not a better merge but a better layout: its sections in a file of their own that the shared `CLAUDE.md` imports, so the shared file is one-sided from then on. See `sync-loop.md`.
 
+## Stopping partway and coming back
+
+A merge of many files does not have to happen in one sitting. A file you resolved and saved is recognised on the next run -- it differs from the seed ccs generated -- and reported as `resumed`. What happens to it then depends on **what your tool does with an output file that already holds work**, which ccs keeps in a registry (`merge-tools.json`, packaged; override it with your own beside `ccs-config.json`):
+
+| Your tool | On the next `ccs merge` | `--relaunch` |
+|---|---|---|
+| shows what is on disk (`vimdiff`, `nvimdiff`) | **reopens** the file with your edits in the output window | same |
+| regenerates its output pane (BeyondCompare, under any name your git config gives it) | leaves the file **closed** -- reopening would discard your work | on Windows, ccs reopens it and **paints your edits back into the pane**: it warns you, asks (config `merge_inject`: `ask` / `always` / `never`), takes the keyboard for about a second, then reads the saved file back to verify. Elsewhere, or if the paint cannot be verified, the file stays as it was |
+| writes-only otherwise (`meld`, `kdiff3`), or a tool ccs has never heard of | closed | reopens the old way -- destructive |
+
+Three rules make the paint safe rather than clever: it **refuses before launching** if the tool already has that file open (a relaunch of an open file creates a hidden second session whose save prompt would overwrite your work -- close that tab first); it **never sends a keystroke** unless focus has verifiably landed on the output pane it resolved; and it **snapshots your file first** -- if the paint is not verified and the tool saves over the file anyway, ccs puts your bytes back before validation and says `restored`. `--relaunch --discard` is the deliberate destructive reopen, named so nobody reaches it by accident.
+
+`ccs doctor` says whether the driver is usable on this box. The exit code your tool returns is printed when it is not zero (BeyondCompare: `101` means the output was not saved).
+
 ## A box with no diff tool
 
 Servers rarely have Beyond Compare. Three options, in the order to try them:

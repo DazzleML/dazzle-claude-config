@@ -37,6 +37,7 @@ You do not need this page to answer a question about one setting -- `--explain <
 | [`require_current`](#require_current) | `false` | `CCS_REQUIRE_CURRENT` |
 | [`auto_pull`](#auto_pull) | `false` | `CCS_AUTO_PULL` |
 | [`sync_removals`](#sync_removals) | `"untouched"` | `CCS_SYNC_REMOVALS` |
+| [`merge_inject`](#merge_inject) | `"ask"` | `CCS_MERGE_INJECT` |
 
 
 ### on_divergence
@@ -104,6 +105,12 @@ Whether `ccs status` fast-forwards your checkout before reporting, when the fetc
 **Default:** `"untouched"` &middot; **Environment:** `CCS_SYNC_REMOVALS` &middot; **One of:** `all`, `never`, `untouched`
 
 What to do about a file the payload RETIRED that this machine still carries. 'untouched' moves it into the backup directory only when your copy still matches a committed version, i.e. holds nothing of yours; a copy you edited is reported and kept instead, because staging away work the payload never had is the one thing this tool refuses to do quietly. 'all' stages every retired file; 'never' only reports. Nothing is ever deleted in place.
+
+### merge_inject
+
+**Default:** `"ask"` &middot; **Environment:** `CCS_MERGE_INJECT` &middot; **One of:** `always`, `ask`, `never`
+
+What `ccs merge --relaunch` may do for a resumed file when your merge tool regenerates its output pane (BeyondCompare does): ccs can reopen the tool and paint your saved work back into the pane, which takes the keyboard for about a second. 'ask' (the default) warns and asks each time; 'always' warns and proceeds; 'never' leaves such files closed. Never happens without a console, and never without --relaunch.
 
 ---
 

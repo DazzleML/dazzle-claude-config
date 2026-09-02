@@ -3,7 +3,16 @@
 Guarded authority: entries expire when the file hash heading no longer matches
 git hash-object (first 12). Only separated-generation runs (modes 1-2) write here.
 
-## dazzle_claude_config/merge.py @ bd11a66513bb
+## dazzle_claude_config/merge.py @ 5353ee230030
+
+- M2 (v0.5.17 sweep): `if cap:` -> `if cap is not None:` in `tool_resume`.
+  **equivalent** -- `by_name` is always built by `_resume_table`, which stores
+  a capability only when `isinstance(cap, str) and cap`, so an empty string
+  can never be present to distinguish the two conditions. (2026-09-01, mode 1;
+  swept against the staged index exported to a scratch root because another
+  session was active in the repo.)
+
+## dazzle_claude_config/merge.py @ bd11a66513bb (STALE -- hash no longer matches; re-triage before reuse)
 
 - m3 (v0.4.0 sweep): original drops `if live.is_file():` before the
   directory-member yield. **equivalent** -- d.modified guarantees both sides

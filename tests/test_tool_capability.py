@@ -47,11 +47,16 @@ def test_vimdiff_preloads_and_meld_and_kdiff3_do_not():
     assert merge.tool_resume("kdiff3") == merge.RESUME_WRITES_ONLY
 
 
-def test_beyondcompare_is_writes_only_under_gits_own_name():
+def test_beyondcompare_declares_the_bc5_injection_profile_under_gits_own_name():
     """`bc` is the only bc-* name git ships (measured: `git --exec-path`/mergetools
-    holds `bc` alone). Every other name is a user's, classified by executable."""
-    assert merge.tool_resume("bc") == merge.RESUME_WRITES_ONLY
+    holds `bc` alone). Every other name is a user's, classified by executable.
+    BC regenerates its output pane, so it is never safe to reopen blind; on
+    Windows the bc5 profile paints the work back in, elsewhere the tier
+    collapses to writes-only."""
+    assert merge.tool_resume("bc") == "inject:bc5"
     assert merge.reopen_is_safe("bc") is False
+    expected = "inject:bc5" if merge.sys.platform == "win32" else merge.RESUME_WRITES_ONLY
+    assert merge.effective_tier("bc") == expected
 
 
 def _configured(monkeypatch, name: str, cmd: str):
@@ -73,8 +78,8 @@ def test_a_configured_tool_is_classified_by_its_executable_not_its_name(monkeypa
         ("beyond", '/usr/bin/bcompare "$LOCAL" "$REMOTE" "$BASE" "$MERGED"'),
     ):
         _configured(monkeypatch, name, cmd)
-        assert merge.tool_resume(name) == merge.RESUME_WRITES_ONLY, name
-        assert merge.reopen_is_safe(name) is False, name
+        assert merge.tool_resume(name) == "inject:bc5", name     # the binary decides
+        assert merge.reopen_is_safe(name) is False, name         # never a blind reopen
     _configured(monkeypatch, "myvim", 'vim -d "$LOCAL" "$BASE" "$REMOTE" "$MERGED"')
     assert merge.tool_resume("myvim") == merge.RESUME_PRELOADS
     assert merge.reopen_is_safe("myvim") is True
@@ -186,6 +191,71 @@ def test_a_registry_entry_overrides_the_fallback_and_junk_is_ignored(monkeypatch
     assert "junk" not in table                  # non-object entry dropped
     assert "blank" not in table                 # empty capability ignored
     assert table["vimdiff"] == merge.RESUME_PRELOADS   # fallback still present
+
+
+# --- i1c: a user overlay in user territory, beside ccs-config.json
+
+def test_no_user_file_means_the_packaged_registry_and_no_errors(tmp_path):
+    reg, errors = merge.effective_registry(tmp_path)
+    assert errors == []
+    assert reg["tools"] == merge.TOOL_REGISTRY["tools"]
+    assert reg["inject_profiles"] == merge.TOOL_REGISTRY["inject_profiles"]
+    assert merge.user_tools_path(tmp_path) == tmp_path / "merge-tools.json"
+
+
+def test_a_user_entry_wins_over_the_packaged_one(tmp_path):
+    """The maintainer measured their own BC; a user who measured theirs
+    differently records it here and the packaged table yields."""
+    (tmp_path / "merge-tools.json").write_text(
+        '{"tools": {"bc": {"resume": "preloads"}},'
+        ' "executables": {"bcomp": {"resume": "preloads"}},'
+        ' "inject_profiles": {"bc5": {"os": "windows", "keys": ["^v"]}}}',
+        encoding="utf-8")
+    reg, errors = merge.effective_registry(tmp_path)
+    assert errors == []
+    assert merge.tool_resume("bc", registry=reg) == merge.RESUME_PRELOADS
+    assert reg["executables"]["bcomp"]["resume"] == "preloads"
+    assert reg["inject_profiles"]["bc5"] == {"os": "windows", "keys": ["^v"]}
+    # and the packaged view is untouched by a user's file
+    assert merge.tool_resume("bc") == "inject:bc5"
+    assert merge.INJECT_PROFILES["bc5"]["keys"] == ["^a", "^v", "^s"]
+
+
+def test_a_user_file_can_add_a_tool_the_package_never_heard_of(tmp_path):
+    (tmp_path / "merge-tools.json").write_text(
+        '{"tools": {"araxis": {"resume": "writes-only"}}}', encoding="utf-8")
+    reg, errors = merge.effective_registry(tmp_path)
+    assert errors == []
+    assert merge.tool_resume("araxis", registry=reg) == merge.RESUME_WRITES_ONLY
+    assert "vimdiff" in reg["tools"]                   # packaged entries kept
+
+
+def test_a_malformed_user_file_is_reported_and_ignored_never_raised(tmp_path):
+    """Same contract as ccs-box.json: a broken declaration narrows nothing
+    and widens nothing -- the packaged registry stands, and the reason is
+    returned for doctor to print."""
+    (tmp_path / "merge-tools.json").write_text("{not json", encoding="utf-8")
+    reg, errors = merge.effective_registry(tmp_path)
+    assert len(errors) == 1 and "merge-tools.json" in errors[0]
+    assert reg["tools"] == merge.TOOL_REGISTRY["tools"]
+    (tmp_path / "merge-tools.json").write_text("[1, 2]", encoding="utf-8")
+    reg, errors = merge.effective_registry(tmp_path)
+    assert errors and "not a JSON object" in errors[0]
+    (tmp_path / "merge-tools.json").write_text('{"tools": 5}', encoding="utf-8")
+    reg, errors = merge.effective_registry(tmp_path)
+    assert errors and "'tools'" in errors[0]
+    assert reg["tools"] == merge.TOOL_REGISTRY["tools"]
+
+
+def test_a_user_file_with_only_profiles_is_fine(tmp_path):
+    """`tools` is required of the PACKAGED file (a package without it is
+    broken); a user file may carry just the piece they want to override."""
+    (tmp_path / "merge-tools.json").write_text(
+        '{"inject_profiles": {"mytool": {"os": "windows"}}}', encoding="utf-8")
+    reg, errors = merge.effective_registry(tmp_path)
+    assert errors == []
+    assert reg["inject_profiles"]["mytool"] == {"os": "windows"}
+    assert reg["tools"] == merge.TOOL_REGISTRY["tools"]
 
 
 def test_the_command_table_is_untouched_by_the_capability_table():

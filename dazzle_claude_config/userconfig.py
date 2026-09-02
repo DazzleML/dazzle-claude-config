@@ -149,6 +149,10 @@ KEYS: dict[str, Key] = _attach_explanations({
     "sync_removals": Key(
         default="untouched", env="CCS_SYNC_REMOVALS",
         choices=frozenset({"untouched", "all", "never"})),
+
+    "merge_inject": Key(
+        default="ask", env="CCS_MERGE_INJECT",
+        choices=frozenset({"ask", "always", "never"})),
 })
 
 #: Derived from KEYS so there is exactly one place per setting. Kept as

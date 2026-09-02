@@ -12,7 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import _version, merge, render
+from . import _version, inject, merge, render
 from .apply import ApplyConflictError, apply
 from .collect import collect
 from .gitops import CheckoutRepo, GitError, GitopsSafetyError
@@ -739,6 +739,33 @@ def _doctor(args) -> int:
                  f"removed; harmless, but the file is describing an older ccs")
         else:
             ok(f"settings explained ({len(userconfig.KEYS)})")
+    # merge-tool capability registry + the injection driver (0.5.17)
+    #
+    # Both are packaged data, so the same packaging blind spot applies: a
+    # checkout has them, an install may not. The driver is also Windows-only
+    # and needs a PowerShell that may run Add-Type, so on Windows doctor says
+    # whether `ccs merge --relaunch` can actually paint work back into a tool.
+    if merge.TOOL_REGISTRY_ERROR:
+        warn(f"{merge.TOOL_REGISTRY_ERROR} -- merge tools fall back to the built-in "
+             f"capability table; no injection profile is available")
+    else:
+        _reg, _reg_errs = merge.effective_registry(user_claude)
+        for e in _reg_errs:
+            warn(f"{e} -- your merge-tools.json overlay is ignored; the packaged table stands")
+        ok(f"merge tools: {len(_reg['tools'])} named, {len(_reg['executables'])} by executable, "
+           f"{len(_reg['inject_profiles'])} injection profile(s)")
+    if sys.platform == "win32":
+        _usable, _why = inject.available()
+        (ok if _usable else warn)(
+            "injection driver ready (PowerShell + inject.ps1): `ccs merge --relaunch` "
+            "can paint your edits back into BeyondCompare"
+            if _usable else
+            f"injection driver unavailable: {_why} -- `ccs merge --relaunch` on "
+            f"BeyondCompare leaves resumed files closed")
+    else:
+        findings.append(("info", "injection driver: not applicable here (Windows-only); "
+                                 "tools that regenerate their output pane keep resumed "
+                                 "files closed on this platform"))
     # manifest + seeds
     manifest = None
     if co.is_dir():
@@ -755,6 +782,24 @@ def _doctor(args) -> int:
     if manifest is not None:
         roots = territory_roots(args.claude_dir, args.user_claude)
         box = boxconfig.load(user_claude)
+        # A kept monolithic CLAUDE.md beside delivered layers: nothing reads
+        # the layers, and the person wonders why global.md appeared. Said
+        # once, here, rather than left to be discovered.
+        _layers_dir = roots["USER_CLAUDE"] / "claude-config"
+        _delivered = [n for n in ("global.md", "platform.md", "machine.md")
+                      if (_layers_dir / n).is_file()]
+        _claude_md = roots["CLAUDE_DIR"] / "CLAUDE.md"
+        if _delivered and _claude_md.is_file():
+            try:
+                _imports_layers = "claude-config/" in _claude_md.read_text(
+                    encoding="utf-8", errors="replace")
+            except OSError:
+                _imports_layers = True
+            if not _imports_layers:
+                warn(f"your CLAUDE.md does not import the delivered layers "
+                     f"({', '.join(_delivered)} under {_layers_dir}) -- they sit "
+                     f"unread. Keep your own file (fine) or `ccs seed migrate "
+                     f"CLAUDE.md` to take the layered stub")
         sf, serr = _seed_findings(manifest, co, roots, repo, box.tags,
                                   roots.get("USER_CLAUDE"))
         for e in serr:
@@ -940,11 +985,17 @@ day to day, once it is installed:
                             help="produce and validate the merged file without "
                                  "opening a diff tool")
             sp.add_argument("--relaunch", action="store_true",
-                            help="reopen your diff tool even for files whose "
-                                 "merged output you already edited. Off by "
-                                 "default because most tools treat that file "
-                                 "as output only and would regenerate it, "
-                                 "discarding your work")
+                            help="reopen your diff tool for files whose merged "
+                                 "output you already edited. For a tool that "
+                                 "regenerates its output pane (BeyondCompare), "
+                                 "ccs paints your edits back into it first, "
+                                 "after asking (config: merge_inject); for a "
+                                 "tool that shows what is on disk (vimdiff) "
+                                 "such files reopen without this flag")
+            sp.add_argument("--discard", action="store_true",
+                            help="with --relaunch: reopen WITHOUT restoring your "
+                                 "edits -- the tool regenerates its output and "
+                                 "your prior work in that file is discarded")
         if verb in ("merge", "diff"):
             sp.add_argument("--base-file", default=None, metavar="FILE",
                             help="use FILE as the common ancestor instead of "
@@ -2559,7 +2610,9 @@ def main(argv: list[str] | None = None) -> int:
             r = merge.run(manifest, checkout, roots, tool=args.tool,
                           dry_run=args.dry_run, accept=args.accept, only=args.only,
                           union=args.union, launch_tool=not args.no_launch,
-                          relaunch=args.relaunch,
+                          relaunch=args.relaunch, discard=args.discard,
+                          inject_mode=str(userconfig.load(roots["USER_CLAUDE"])
+                                          .get("merge_inject", "ask")),
                           preview=args.preview, base_mode=args.base,
                           base_override=blob, base_label=label,
                           cod_ratio=args.block_swap_ratio)
@@ -2600,15 +2653,45 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{c('dim', 'resumed')} {item.label} "
                       + c("dim", "-- differs from the generated seed; "
                                  "keeping it as yours"))
-            if r.resumed and not args.no_launch and not args.relaunch:
+            for item in r.reopened:
+                print(f"{c('dim', 'reopened')} {item.label} "
+                      + c("dim", f"-- {r.tool} shows what is on disk, so your edits are in the tool"))
+            for item in r.injected:
+                print(f"{c('green', 'reopened')} {item.label} "
+                      + c("dim", f"-- your prior edits were painted back into {r.tool} and verified"))
+            for item in r.discarded:
+                print(f"{c('yellow', 'reopened WITHOUT your edits')} {item.label} "
+                      + c("dim", "-- --discard: the tool regenerated its output"))
+            for item, why in r.inject_refused:
+                print(f"{c('yellow', 'not reopened')} {item.label} {c('dim', '-- ' + why)}")
+            for item, why in r.inject_failed:
+                print(f"{c('red', 'injection failed')} {item.label} {c('dim', '-- ' + why)}")
+            for item in r.restored:
+                print(f"{c('green', 'restored')} {item.label} "
+                      + c("dim", "-- the tool saved over your unverified edits; ccs put them back"))
+            for why in r.registry_errors:
+                print(c("yellow", f"merge-tools.json (yours): {why} -- ignored; the packaged table stands"))
+            held = [i for i in r.resumed if i not in r.reopened and i not in r.injected
+                    and i not in r.discarded and all(i is not j for j, _ in r.inject_refused)]
+            if held and not args.no_launch and not args.relaunch:
                 # "Why didn't my tool open?" is the immediate next question,
                 # and leaving it unanswered reads as a failure rather than a
-                # deliberate refusal to destroy work.
-                print(c("dim", f"  ({render.n_files(len(r.resumed))} not "
-                               f"reopened: your tool is handed the merged file "
-                               f"as its OUTPUT and would regenerate it over "
-                               f"your edits. ")
-                      + c("bold", "--relaunch") + c("dim", " opens them anyway.)"))
+                # deliberate refusal to destroy work. The wording follows the
+                # tool's declared tier.
+                if r.tier and r.tier.startswith(merge.RESUME_INJECT_PREFIX):
+                    how = (c("bold", "--relaunch")
+                           + c("dim", " reopens them with your edits painted back in.)"))
+                else:
+                    how = c("bold", "--relaunch") + c("dim", " opens them anyway.)")
+                print(c("dim", f"  ({render.n_files(len(held))} not "
+                               f"reopened: {r.tool or 'your tool'} is handed the merged "
+                               f"file as its OUTPUT and would regenerate it over "
+                               f"your edits. ") + how)
+            for label, rc in sorted(r.tool_exit.items()):
+                if rc:
+                    print(c("dim", f"  {r.tool or 'tool'} exited {rc} for {label}"
+                                   + (" -- conflicts were still present" if rc == 14 else
+                                      " -- the output was not saved" if rc == 101 else "")))
             loss_by_item = {id(i): v for i, v in r.accepted_with_loss}
             honoured_by_item = {id(i): v for i, v in r.honoured}
             adopted = {id(i) for i in r.adopted}

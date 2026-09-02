@@ -28,6 +28,10 @@ REQUIRED = {
         "every merge tool would fall to the built-in capability table and no "
         "injection profile would exist -- `ccs merge --relaunch` could never "
         "restore work into BeyondCompare",
+    "dazzle_claude_config/inject.ps1":
+        "the injection driver would be absent: `ccs merge --relaunch` on an "
+        "inject-capable tool would fall to the floor (file left closed) on "
+        "every installed Windows box",
 }
 
 

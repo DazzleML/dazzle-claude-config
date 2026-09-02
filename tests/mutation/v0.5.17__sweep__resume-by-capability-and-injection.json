@@ -1,0 +1,135 @@
+{
+  "harness": {
+    "name": "mutation_sweep.py",
+    "version": "0.1.0"
+  },
+  "environment": {
+    "python": "3.12.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "root": "C:\\Users\\Extreme\\AppData\\Local\\Temp\\ccs-mut-v0517",
+    "test_command": [
+      "python",
+      "-B",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "tests/test_inject_flow.py",
+      "tests/test_inject_driver.py",
+      "tests/test_tool_capability.py"
+    ],
+    "timestamp": "2026-09-01T22:07:35-04:00"
+  },
+  "results": [
+    {
+      "id": "M1",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "Drops the .lower() normalization, so an executable name differing only in case no longer matches the lowercase keys in EXE_RESUME/registry lookups.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M2",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "None-vs-truthiness -- an empty-string resume cap (falsy but not None) now short-circuits as a hit instead of falling through to the executable-based lookup.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M3",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "Comparison flip inverts the reopen-safety check, marking every declared-safe tool unsafe and every unclassified tool safe to reopen.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M4",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "Guard flip in the platform-applicability check -- an os-scoped profile now applies unconditionally everywhere, while a platform-agnostic profile now never applies.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M5",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "or->and swap lets a well-typed profile that simply doesn't apply on this platform slip through unrejected, silently promoting an inapplicable inject profile.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M6",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "Inverts the core relaunch-safety guard, letting the tool relaunch into an already-open file -- the hidden-second-session data-loss scenario the function exists to prevent.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M7",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "Inverts the consent check so injection proceeds when the user declines the prompt and is refused when they approve it.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M8",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "Comparison flip on the finally-block safety net -- the pre-inject sidecar is restored only when the file is unchanged, never in the actual case where an unverified paint corrupted it.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M9",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "Boolean flip inverts which branch handles a resumed+relaunch item -- routes to the injection flow only when discard was requested.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M10",
+      "file": "dazzle_claude_config/merge.py",
+      "note": "None-vs-truthiness -- a successful tool exit code of 0 is falsy, so it is no longer recorded into res.tool_exit after the injection flow.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M11",
+      "file": "dazzle_claude_config/inject.py",
+      "note": "Drops the reversal, breaking the documented 'LAST JSON line wins' contract -- now returns the first valid JSON line, which can be a stray warning printed before the real result.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M12",
+      "file": "dazzle_claude_config/inject.py",
+      "note": "None-vs-truthiness -- a driver result of {} (a valid but empty JSON object) is wrongly treated as 'no result line found' instead of proceeding to be filled in with ok/rc.",
+      "verdict": "survived",
+      "restore_ok": true,
+      "output_tail": ""
+    },
+    {
+      "id": "M13",
+      "file": "dazzle_claude_config/inject.py",
+      "note": "and->or swap lets a None value (which satisfies value != \"\") pass through, appending the literal string 'None' as a driver argument instead of being skipped.",
+      "verdict": "killed",
+      "restore_ok": true,
+      "output_tail": ""
+    }
+  ],
+  "summary": {
+    "killed": 10,
+    "survived": 3
+  },
+  "anomalies": []
+}

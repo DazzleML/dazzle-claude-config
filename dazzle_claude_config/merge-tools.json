@@ -5,11 +5,11 @@
     "nvimdiff": {"resume": "preloads",    "why": "same as vimdiff"},
     "meld":     {"resume": "writes-only", "why": "--output is a destination"},
     "kdiff3":   {"resume": "writes-only", "why": "-o is a destination"},
-    "bc":       {"resume": "writes-only", "why": "git's own name for BeyondCompare (the only bc-* git ships); any other name -- bc2, bc4, bc5, beyondcompare4 -- is classified by its executable below"}
+    "bc":       {"resume": "inject:bc5", "why": "git's own name for BeyondCompare (the only bc-* git ships); it regenerates its output pane, so ccs paints the work back in via the bc5 profile on Windows and treats it as writes-only elsewhere. Any other name -- bc2, bc4, bc5, beyondcompare4 -- is classified by its executable below"}
   },
   "executables": {
-    "bcomp":    {"resume": "writes-only", "why": "regenerates the output pane from the three inputs on every load (measured on BC5; Scooter's docs, identical for BC4)"},
-    "bcompare": {"resume": "writes-only", "why": "the GUI launcher of the same tool"},
+    "bcomp":    {"resume": "inject:bc5", "why": "regenerates the output pane from the three inputs on every load (measured on BC5; Scooter's docs, identical for BC4); the bc5 profile paints the work back in"},
+    "bcompare": {"resume": "inject:bc5", "why": "the GUI launcher of the same tool"},
     "vim":      {"resume": "preloads",    "why": "opens $MERGED as a buffer"},
     "nvim":     {"resume": "preloads",    "why": "same"},
     "meld":     {"resume": "writes-only", "why": "--output is a destination"},
