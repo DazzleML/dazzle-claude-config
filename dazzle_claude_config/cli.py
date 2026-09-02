@@ -21,8 +21,9 @@ from .platform_info import backup_root, default_checkout_dir, territory_roots
 from .render import c
 from . import boxconfig, userconfig
 from . import deleted as _deleted
-from .syncmap import (_normalize_eol, diff_all, entry_gate_reason, files_differ,
-                      line_stats, only_scope, rel_in_scope)
+from .syncmap import (_normalize_eol, diff_all, entry_applies, entry_bases,
+                      entry_gate_reason, files_differ, line_stats, only_scope,
+                      rel_in_scope)
 
 EXIT_CLEAN, EXIT_DRIFT, EXIT_ERROR = 0, 1, 2
 
@@ -1386,13 +1387,24 @@ def _print_ambiguous(e: AmbiguousPath) -> None:
         print(f"  {label}", file=sys.stderr)
 
 
-def _resolve_pair(all_diffs, want: str):
+def _resolve_pair(all_diffs, want: str, *, manifest=None, checkout=None, roots=None,
+                  box_tags=frozenset()):
     """Find (live_path, repo_path, target_label, repo_label) for a user path.
 
     Looks in the DIFFERING set first, then falls back to resolving against the
     manifest, so a file that is perfectly in sync still resolves. Without the
     fallback an in-sync file was indistinguishable from a typo -- and after a
     merge, in-sync is the normal state.
+
+    A third step, taken only when `manifest`, `checkout` and `roots` are all
+    given: single-file entries of ANY strategy, straight from the manifest.
+    `diff_all` walks copy entries only, so a seed-if-absent file -- the very
+    file merge's seed refusal tells you to name -- was unreachable here, and
+    for one release `ccs merge settings.local.json` resolved while `ccs diff
+    settings.local.json` did not. The step is the resolver's, not any one
+    verb's, so the four verbs that take a path cannot drift again. It honours
+    the box gate the same way the differing set does: a tag-gated entry is
+    not a match, so the caller's "not for this box" explanation still fires.
 
     A bare filename that lives in two entries (`SAME.md` under both `s/` and
     `t/`) used to resolve to whichever entry came first in the manifest, with
@@ -1431,11 +1443,24 @@ def _resolve_pair(all_diffs, want: str):
                 target = f"{d.entry.target}/{rel}" if rel else d.entry.target
                 repo = f"{d.entry.repo}/{rel}" if rel else d.entry.repo
                 return lv, rp, target, repo
+    if manifest is None or checkout is None or roots is None:
+        return None
+    hits = [e for e in manifest.entries
+            if e.territory and e.target and e.repo and e.strategy != "plugins"
+            and entry_applies(e, box_tags)
+            and (_suffix_match(e.target, want) or _suffix_match(e.repo, want))]
+    if len(hits) > 1:
+        raise AmbiguousPath(want, [e.repo for e in hits])
+    for e in hits:
+        lv, rp = entry_bases(e, checkout, roots, manifest.territories)
+        if lv.is_file() or rp.is_file():
+            return lv, rp, e.target, e.repo
     return None
 
 
 def _launch_file_difftool(all_diffs, wanted: str, tool: str | None, *, supplied=None,
-                          ways: int = 2, checkout=None, roots=None, repo=None) -> int:
+                          ways: int = 2, checkout=None, roots=None, repo=None,
+                          manifest=None, box_tags=frozenset()) -> int:
     """Open one file in the user's own diff tool.
 
     ways=2: live vs checkout, through git's difftool registry.
@@ -1454,7 +1479,8 @@ def _launch_file_difftool(all_diffs, wanted: str, tool: str | None, *, supplied=
     """
     want = wanted.replace(chr(92), "/").strip("/")
     try:
-        found = _resolve_pair(all_diffs, want)
+        found = _resolve_pair(all_diffs, want, manifest=manifest, checkout=checkout,
+                              roots=roots, box_tags=box_tags)
     except AmbiguousPath as e:
         _print_ambiguous(e)
         return EXIT_ERROR
@@ -1546,7 +1572,8 @@ def _two_way_fallback(lv, rp, target, repo_label, tool) -> int:
     return EXIT_DRIFT
 
 
-def _print_file_diff(all_diffs, wanted: str, manifest=None, box=None) -> int:
+def _print_file_diff(all_diffs, wanted: str, manifest=None, box=None, *,
+                     checkout=None, roots=None) -> int:
     """`ccs diff <path>`: print the line-by-line difference for one file.
 
     The printed counterpart of `--difftool`, sharing its path resolution so the
@@ -1562,21 +1589,14 @@ def _print_file_diff(all_diffs, wanted: str, manifest=None, box=None) -> int:
     import difflib
     want = wanted.replace(chr(92), "/").strip("/")
     try:
-        found = _resolve_pair(all_diffs, want)
+        found = _resolve_pair(all_diffs, want, manifest=manifest, checkout=checkout,
+                              roots=roots,
+                              box_tags=box.tags if box is not None else frozenset())
     except AmbiguousPath as e:
         _print_ambiguous(e)
         return EXIT_ERROR
     if found is None:
-        hidden = _gated_matches(manifest, box, lambda r: _suffix_match(r, want)
-                                or want.startswith(r.rstrip("/") + "/"))             if manifest is not None else []
-        if hidden:
-            print(c("red", f"not for this box: {wanted!r}")
-                  + c("dim", " -- its entry is gated off here: " + "; ".join(hidden)),
-                  file=sys.stderr)
-        else:
-            print(c("red", f"no such file in any manifest entry: {wanted!r}")
-                  + c("dim", " -- run `ccs diff` with no argument to list what differs"),
-                  file=sys.stderr)
+        _print_no_such_file(manifest, box, wanted, want)
         return EXIT_ERROR
     lv, rp, target, repo = found
     left = _normalize_eol(rp.read_bytes()) if rp.is_file() else b""
@@ -1772,6 +1792,25 @@ def _gated_matches(manifest, box, pred) -> list[str]:
     return out
 
 
+def _print_no_such_file(manifest, box, wanted: str, want: str) -> None:
+    """The one sentence for a user path that resolves to nothing -- shared by
+    `ccs diff <path>` and the positional on merge/collect/apply, so the same
+    miss never reads two ways (#39's rule). A tag-gated entry the path would
+    have reached is named as "not for this box" instead, because a typo and a
+    missing tag must not print the same words."""
+    hidden = _gated_matches(manifest, box, lambda r: _suffix_match(r, want)
+                            or want.startswith(r.rstrip("/") + "/")) \
+        if manifest is not None else []
+    if hidden:
+        print(c("red", f"not for this box: {wanted!r}")
+              + c("dim", " -- its entry is gated off here: " + "; ".join(hidden)),
+              file=sys.stderr)
+    else:
+        print(c("red", f"no such file in any manifest entry: {wanted!r}")
+              + c("dim", " -- run `ccs diff` with no argument to list what differs"),
+              file=sys.stderr)
+
+
 def _warn_only_miss(args, manifest, box) -> None:
     hidden = _gated_matches(manifest, box, lambda r: only_scope(args.only, r)[0])
     if hidden:
@@ -1805,32 +1844,23 @@ def _fold_path_into_only(args, manifest, checkout, roots, box) -> int | None:
         print(c("red", "error") + ": name the file as a positional OR with --only, "
               "not both", file=sys.stderr)
         return EXIT_ERROR
+    wanted = want
     want = want.replace(chr(92), "/").strip("/")
     try:
-        found = _resolve_pair(diff_all(manifest, checkout, roots, box.tags), want)
+        # The same resolver `ccs diff <path>` uses, including its last step
+        # through the manifest -- so a seeded file resolves here exactly when
+        # it resolves there, and a miss prints the same sentence.
+        found = _resolve_pair(diff_all(manifest, checkout, roots, box.tags), want,
+                              manifest=manifest, checkout=checkout, roots=roots,
+                              box_tags=box.tags)
     except AmbiguousPath as e:
         _print_ambiguous(e)
         return EXIT_ERROR
-    if found is not None:
-        args.only = found[3]      # the qualified repo label: what --only takes
-        return None
-    # diff_all walks copy entries only, so _resolve_pair cannot see a
-    # seed-if-absent entry -- the very file the seed refusal tells you to
-    # name (`ccs merge settings.local.json`). Reach single-file entries of
-    # any strategy through the manifest, with the same whole-component
-    # suffix rule and the same refusal to guess between two matches.
-    hits = [e for e in manifest.entries
-            if e.territory and e.target and e.repo
-            and (_suffix_match(e.target, want) or _suffix_match(e.repo, want))]
-    if len(hits) > 1:
-        _print_ambiguous(AmbiguousPath(want, [e.repo for e in hits]))
+    if found is None:
+        _print_no_such_file(manifest, box, wanted, want)
         return EXIT_ERROR
-    if hits:
-        args.only = hits[0].repo
-        return None
-    print(c("red", "error") + f": no such file {want!r} in the manifest or the "
-          "checkout -- `ccs status` lists what there is", file=sys.stderr)
-    return EXIT_ERROR
+    args.only = found[3]          # the qualified repo label: what --only takes
+    return None
 
 
 # The seed-state machine (issue #27) moved to seeddecisions.findings on
@@ -2820,8 +2850,10 @@ def main(argv: list[str] | None = None) -> int:
                                                  getattr(args, 'tool', None),
                                                  ways=ways, checkout=checkout,
                                                  roots=roots, repo=repo,
-                                                 supplied=_supplied_base(args))
-                return _print_file_diff(all_diffs, wanted, manifest, box)
+                                                 supplied=_supplied_base(args),
+                                                 manifest=manifest, box_tags=box.tags)
+                return _print_file_diff(all_diffs, wanted, manifest, box,
+                                        checkout=checkout, roots=roots)
             for d in diffs:
                 if d.mismatch:
                     print(c("red", f"mismatch:   {d.entry.repo} ({d.mismatch})"))

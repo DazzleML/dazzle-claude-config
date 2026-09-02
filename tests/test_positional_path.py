@@ -51,12 +51,14 @@ def world(tmp_path):
         '{"repo":"dotclaude/t","territory":"dotclaude","target":"t","strategy":"copy"},'
         '{"repo":"dotclaude/skills","territory":"dotclaude","target":"skills","strategy":"copy"},'
         '{"repo":"dotclaude/SEED.md","territory":"dotclaude","target":"SEED.md",'
-        '"strategy":"seed-if-absent"}'
+        '"strategy":"seed-if-absent"},'
+        '{"repo":"dotclaude/gpu.md","territory":"dotclaude","target":"gpu.md",'
+        '"strategy":"copy","tags":["gpu"]}'
         ']}', encoding="utf-8")
-    for rel in ("s/SAME.md", "t/SAME.md", "skills/think/SKILL.md", "SEED.md"):
+    for rel in ("s/SAME.md", "t/SAME.md", "skills/think/SKILL.md", "SEED.md", "gpu.md"):
         (co / "dotclaude" / rel).write_text(f"{rel} checkout\n", encoding="utf-8")
     _git(co, "add", "-A"); _git(co, "commit", "-qm", "seed")
-    for rel in ("s/SAME.md", "t/SAME.md", "skills/think/SKILL.md", "SEED.md"):
+    for rel in ("s/SAME.md", "t/SAME.md", "skills/think/SKILL.md", "SEED.md", "gpu.md"):
         (live / rel).write_text(f"{rel} live edit\n", encoding="utf-8")
     return co, live, user
 
@@ -104,6 +106,55 @@ def test_a_seed_entry_is_reachable_through_the_manifest(world):
     co, live, user = world
     rc, only = _fold(co, live, user, "merge", "SEED.md")
     assert rc is None and only == "dotclaude/SEED.md"
+
+
+def test_diff_resolves_a_seed_entry_too(world, capsys):
+    """For one release `ccs merge SEED.md` resolved and `ccs diff SEED.md` did
+    not: the manifest fallback lived in the positional's caller. It is the
+    resolver's last step now, so the verb that takes a path first gets it."""
+    co, live, user = world
+    rc = main(_argv(co, live, user, "diff", "SEED.md"))
+    out, err = capsys.readouterr()
+    assert rc in (0, 1), (out, err)
+    assert "no such file" not in err
+    assert "SEED.md live edit" in out          # the diff body was printed
+
+
+def test_one_path_resolves_to_one_label_for_all_four_verbs(world):
+    """`_resolve_pair` with the manifest step is what every path-taking verb
+    reads; the three folds must agree with it, and with each other."""
+    from dazzle_claude_config.cli import _resolve_pair
+    from dazzle_claude_config.syncmap import diff_all
+    co, live, user = world
+    manifest = Manifest.load(co)
+    roots = {"CLAUDE_DIR": live, "USER_CLAUDE": user}
+    direct = _resolve_pair(diff_all(manifest, co, roots), "SEED.md",
+                           manifest=manifest, checkout=co, roots=roots)
+    assert direct is not None and direct[3] == "dotclaude/SEED.md"
+    for verb in ("merge", "collect", "apply"):
+        rc, only = _fold(co, live, user, verb, "SEED.md")
+        assert rc is None and only == direct[3], verb
+
+
+def test_a_tag_gated_file_named_at_merge_says_not_for_this_box(world, capsys):
+    """A typo and a missing tag must not print the same words -- `diff` has
+    said "not for this box" since the gate existed; the positional says it
+    too, from the same function."""
+    co, live, user = world                     # the box declares no tags
+    rc = main(_argv(co, live, user, "merge", "--dry-run", "--no-launch", "gpu.md"))
+    _out, err = capsys.readouterr()
+    assert rc == 2
+    assert "not for this box" in err and "needs" in err and "gpu" in err
+
+
+def test_the_not_found_sentence_is_defined_once():
+    """One condition, one sentence (#39's rule): the source carries the
+    string exactly once, in the helper both `diff` and the positional call."""
+    from pathlib import Path
+    import dazzle_claude_config.cli as cli
+    src = Path(cli.__file__).read_text(encoding="utf-8")
+    assert src.count("no such file in any manifest entry") == 1
+    assert src.count("in the manifest or the checkout") == 0   # the second wording is gone
 
 
 def test_diff_is_untouched_by_the_fold(world):

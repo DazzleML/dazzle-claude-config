@@ -4,6 +4,12 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.19] - 2026-09-02
+
+### Fixed
+- **`ccs diff <path>` names a seeded file too.** v0.5.18 let `ccs merge settings.local.json` reach a starter file through the manifest but left `ccs diff settings.local.json` failing with "no such file". The lookup is now the resolver's own last step, so every verb that takes a path finds the same files.
+- **A path that matches nothing prints one sentence, whichever verb you gave it to.** `ccs merge nope.md` used to print its own wording; it now prints the one `ccs diff` prints -- `no such file in any manifest entry: 'nope.md' -- run ccs diff with no argument to list what differs` -- and, when the only match is an entry your box is not tagged for, says `not for this box` and names the tag, as `diff` always has.
+
 ## [0.5.18] - 2026-09-02
 
 ### Added
@@ -410,7 +416,7 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.18...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.19...HEAD
 [0.5.17]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.16...v0.5.17
 [0.5.16]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.15...v0.5.16
 [0.5.15]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.14...v0.5.15
