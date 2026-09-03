@@ -4,6 +4,14 @@ All notable changes to dazzle-claude-config (ccs) are documented here. Format fo
 
 ## [Unreleased]
 
+## [0.5.20] - 2026-09-03
+
+### Changed
+- **The no-base prompt now says what it knows and what each answer does.** When a merge has no common ancestor and the result drops lines one side had, ccs asks before installing -- and the old prompt was written to be correct, not read: a sentence trailing into `--`, "ours" for your own live file, a count in parentheses, a line cut at 100 characters with nothing to say so, and a question that never said what `y` or `N` would do. It now reads, for example: `agents/x.md: no common ancestor, so ccs cannot tell a deliberate deletion from a lost line. / The merged result drops 1 line that your live file has: / <the line> / If you dropped that line from your live file on purpose, install the result: y. / If it should have stayed, answer N and resolve the file by hand. [y/N]`. The closing sentences name whoever could have meant the drop -- you for a line of yours, the payload for a line of its copy, and both when the losses are mixed. Nothing about the gate's behaviour changed: unattended runs still never say yes.
+- **The `NOT INSTALLED` lines that follow speak the same language.** `N line(s) that your live file has are missing from the result` instead of `present only in ours`, and the quoted first line ends in `...` when it was shortened, instead of stopping mid-word.
+- **Long lines are cut to your terminal, and the cut is marked.** Each dropped line is fitted to the terminal's width (honouring `COLUMNS`; 80 when piped) and ends in `...` when it did not fit, with one note naming `ccs diff <path>` to see it whole. The width helper is the same idiom `dz list` uses.
+- **The prompt has colour, in the family's roles:** the path cyan, the line that needs your attention yellow, the file's own lines magenta, the answers you type bold -- the convention the rest of ccs (and claude-session-backup) already follows. As everywhere in ccs, colour appears only on a terminal and never under `--no-color` or `NO_COLOR`.
+
 ## [0.5.19] - 2026-09-02
 
 ### Fixed
@@ -416,7 +424,7 @@ Fixes both issues 0.3.0 shipped as known, plus five more found by running the to
 - Console scripts `ccs` and `dazzle-claude-config`; stdlib-only, Python 3.10+
 - 53 automated tests + tester-agent exploratory report + human test checklist (`tests/checklists/v0.1.0__Phase1__collect-apply-status-diff.md`)
 
-[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.19...HEAD
+[Unreleased]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.20...HEAD
 [0.5.17]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.16...v0.5.17
 [0.5.16]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.15...v0.5.16
 [0.5.15]: https://github.com/DazzleML/dazzle-claude-config/compare/v0.5.14...v0.5.15

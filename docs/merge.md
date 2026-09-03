@@ -73,14 +73,15 @@ Read it. On a right ancestor this is a receipt: the other machines retired those
 Two-way merge: your tool opens with an empty middle pane, the output pane seeded with ours, and every difference a question. Resolve as usual. One thing changes at validation time: with no ancestor the tool cannot tell a deliberate deletion from an accident, so if the only problem with your result is that lines one side held are missing, and you resolved the file yourself, it shows you those lines and asks:
 
 ```
-no base for CLAUDE.md: ccs cannot tell whether these lines were deleted on purpose or by accident --
-  only in theirs, absent from your result (2):
+CLAUDE.md: no common ancestor, so ccs cannot tell a deliberate deletion from a lost line.
+  The merged result drops 2 lines that the payload's copy has:
     - the line you chose to drop
     - and another
-  you reviewed this file -- install it anyway? [y/N]
+  If the payload removed those lines on purpose, install the result: y.
+  If they should have stayed, answer N and resolve the file by hand.  [y/N]
 ```
 
-Answer `y` only if you meant it. Unattended runs (no console, CI) never say yes. A fresh, untouched seed is never asked about -- the prompt is for *your* result.
+Long lines are cut to your terminal's width and marked with `...`; when that happens a note names `ccs diff <path>`, which shows them whole. On a terminal the path is cyan, the count line yellow, the file's own lines magenta, and the answers bold -- the same colours the rest of ccs uses; piped, or with `--no-color`, it is plain text. Answer `y` only if you meant it. Unattended runs (no console, CI) never say yes. A fresh, untouched seed is never asked about -- the prompt is for *your* result.
 
 ## Adopting a machine that forked before the payload existed
 
@@ -180,7 +181,7 @@ Servers rarely have Beyond Compare. Three options, in the order to try them:
 | message | meaning | what to do |
 |---|---|---|
 | `unresolved conflict markers` | you saved the file with `<<<<<<<` still in it | open it again and finish |
-| `N line(s) present only in ours/theirs are missing from the result` | a line one side *added* is gone from your result, not replaced by a rewrite | put it back, or -- no base only -- answer the prompt |
+| `N line(s) that your live file / the payload's copy has are missing from the result` | a line one side *added* is gone from your result, not replaced by a rewrite | put it back, or -- no base only -- answer the prompt |
 | `N line(s) in the result appear in neither side nor the base` | invented content: the tool is not a place to write new text | take it out; edit the live file after the merge |
 | `content was duplicated` | the same substantial line landed twice (usually `--union`) | remove one |
 | `content lost: 'name' was present on an input side` | a named probe (something the manifest or a hint asked to preserve) is gone | put it back |

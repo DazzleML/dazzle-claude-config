@@ -103,7 +103,7 @@ merged and installed: CLAUDE.md
 
 Read that list. On a right base it is a receipt; on a wrong one it is the alarm -- if a heading you wrote on this box appears under "retired upstream", the merge ran against an ancestor that never held it, and the result should not be accepted.
 
-With no ancestor at all the tool cannot tell a deliberate deletion from an accident, but the person who just resolved the file can: if the only problem is dropped lines and you resolved the file yourself, `merge` prints those lines and asks `install it anyway? [y/N]`. Unattended runs never say yes.
+With no ancestor at all the tool cannot tell a deliberate deletion from an accident, but the person who just resolved the file can: if the only problem is dropped lines and you resolved the file yourself, `merge` prints those lines, says what `y` and `N` each do (`If the payload removed those lines on purpose, install the result: y. If they should have stayed, answer N and resolve the file by hand.`), and waits. Unattended runs never say yes.
 
 ### Adopting a box that forked before the payload existed
 

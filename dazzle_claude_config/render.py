@@ -56,6 +56,37 @@ def c(name: str, text: str) -> str:
     return f"{_ANSI[name]}{text}{_ANSI['reset']}"
 
 
+#: What `shutil.get_terminal_size` answers when stdout is not a terminal and
+#: COLUMNS is unset -- a pipe, a CI log, a test. The classic 80 columns.
+TERM_FALLBACK = (80, 24)
+
+
+def terminal_width() -> int:
+    """Columns of the terminal stdout is attached to. Honours COLUMNS; falls
+    back to TERM_FALLBACK when piped. Read per call, never cached: a person
+    can resize the window between two prompts."""
+    import shutil
+    return shutil.get_terminal_size(TERM_FALLBACK).columns
+
+
+def fit(text: str, indent: int = 0, min_width: int = 20) -> tuple[str, bool]:
+    """Cut `text` so `indent + text` fits the terminal, marking the cut with
+    `...`. Returns (shown, was_cut).
+
+    The budget is computed from the ACTUAL printed prefix, never a fixed
+    number -- the `dz list` idiom (dazzlecmd `parsers._one_line_row`), whose
+    docstring records why: a fixed budget let long rows exceed the terminal
+    and the terminal hard-wrapped the tail mid-word. Below `min_width` of room
+    nothing is cut, because a three-column budget would show only the marker.
+    A silent `[:100]` was how the no-base prompt cut a line for a year with
+    nothing to say it had.
+    """
+    avail = terminal_width() - indent
+    if avail < min_width or len(text) <= avail:
+        return text, False
+    return text[:avail - 3] + "...", True
+
+
 def n_files(n: int) -> str:
     return f"{n} file" if n == 1 else f"{n} files"
 

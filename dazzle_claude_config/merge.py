@@ -44,7 +44,7 @@ from .manifest import Entry, Manifest
 from .platform_info import user_claude_dir
 from .secrets import is_denied, scan_file
 from .userconfig import not_valid_json
-from . import seeddecisions
+from . import render, seeddecisions
 from .syncmap import EntryDiff, _normalize_eol, diff_all, only_scope, rel_in_scope, scope_diff
 
 # Strategies whose target is a straight copy of one repo file. Anything else
@@ -1145,8 +1145,9 @@ def validate(item: MergeItem, merged: Path,
         if dropped:
             res.lost[side] = dropped
             res.failures.append(
-                f"{_LOSS_PREFIX} {len(dropped)} line(s) present only in {side} are "
-                f"missing from the result -- not replaced (first: {sorted(dropped)[0][:70]!r})")
+                f"{_LOSS_PREFIX} {len(dropped)} line(s) that {_side_name(side)} has are "
+                f"missing from the result, not replaced "
+                f"(first: {_excerpt(sorted(dropped)[0], 70)!r})")
 
     known = _lines(item.live) | _lines(item.repo) | _lines(item.base)
     if known:
@@ -1155,7 +1156,7 @@ def validate(item: MergeItem, merged: Path,
         if invented:
             res.failures.append(
                 f"{len(invented)} line(s) in the result appear in neither side "
-                f"nor the base (first: {invented[0][:60]!r})")
+                f"nor the base (first: {_excerpt(invented[0], 60)!r})")
 
     # --union keeps BOTH sides, so its characteristic failure is duplication:
     # a paragraph present in ours and theirs can land twice. Only substantial
@@ -1173,7 +1174,7 @@ def validate(item: MergeItem, merged: Path,
     if dupes:
         res.failures.append(
             f"{len(dupes)} line(s) appear more often than on either side -- "
-            f"content was duplicated (first: {dupes[0][:60]!r})")
+            f"content was duplicated (first: {_excerpt(dupes[0], 60)!r})")
 
     for pat in regressed:
         n = text.count(pat)
@@ -1620,24 +1621,82 @@ def _inject_flow(res: MergeResult, item: MergeItem, merged: Path, base: Path,
 
 
 def _ask_loss_on_console(item: MergeItem, v: ValidationResult) -> bool:
-    """Default `confirm_loss`: print what would vanish, ask, default no.
-    Non-interactive (CI, piped stdin) never accepts -- a silent yes here is
-    exactly the class of failure the gate exists to stop."""
+    """Default `confirm_loss`: show what the merged result drops, say what
+    each answer does, ask, default no. Non-interactive (CI, piped stdin)
+    never accepts -- a silent yes here is exactly the class of failure the
+    gate exists to stop.
+
+    Written to be READ (2026-09-03, after the maintainer met it on a real
+    merge): the file first; what ccs knows and does not; a count instead of
+    "(1)"; "your live file" instead of "ours"; every line cut to the terminal
+    and the cut marked, with the command that shows it whole; and the two
+    sentences the old prompt never had -- what `y` means and what `N` means.
+    """
     if not interactive():
         return False
-    print(f"no base for {item.label}: ccs cannot tell whether these lines were "
-          f"deleted on purpose or by accident --")
+    # Colour roles follow render.py's family convention (csb's search_render):
+    # bold cyan for the path, yellow for what needs the person's attention,
+    # magenta for the file content at risk (what the CLI already uses for a
+    # file that would be clobbered), dim for notes, bold for what you type.
+    # render.c() is plain text when colour is off -- piped, CI, --no-color.
+    c = render.c
+    print(f"{c('bold_cyan', item.label)}: no common ancestor, so ccs cannot tell "
+          f"a deliberate deletion from a lost line.")
+    cut = False
+    total = 0
     for side, lines in v.lost.items():
-        print(f"  only in {side}, absent from your result ({len(lines)}):")
+        whose = "your live file" if side == "ours" else "the payload's copy"
+        n = len(lines)
+        total += n
+        print("  " + c("yellow", f"The merged result drops {n} line{'' if n == 1 else 's'} "
+                                 f"that {whose} has:"))
         for ln in lines[:12]:
-            print(f"    {ln[:100]}")
-        if len(lines) > 12:
-            print(f"    ... and {len(lines) - 12} more")
+            shown, was_cut = render.fit(ln, indent=4)
+            cut = cut or was_cut
+            print(f"    {c('magenta', shown)}")
+        if n > 12:
+            print(c("dim", f"    ... and {n - 12} more"))
+    if cut:
+        print(c("dim", "  (cut to fit the terminal; ") + c("bold", f"ccs diff {item.label}")
+              + c("dim", " shows them whole)"))
+    # The closing pair is SIDE-AWARE (found by the maintainer's eyes step,
+    # 2026-09-03: a world dropping one line from each side read "if the
+    # payload removed those lines" over a line that was his own). Whose
+    # line it was decides who could have meant to drop it.
+    sides = {s for s, lines in v.lost.items() if lines}
+    those = "that line" if total == 1 else "those lines"
+    they = "it" if total == 1 else "they"
+    if sides == {"ours"}:
+        first = f"If you dropped {those} from your live file on purpose, install the result: "
+        second = f"If {they} should have stayed, answer "
+    elif sides == {"theirs"}:
+        first = f"If the payload removed {those} on purpose, install the result: "
+        second = f"If {they} should have stayed, answer "
+    else:
+        first = ("If each of those lines was dropped on purpose -- the payload's by the "
+                 "payload, yours by you -- install the result: ")
+        second = "If any of them should have stayed, answer "
+    print(f"  {first}{c('bold', 'y')}.")
     try:
-        answer = input("  you reviewed this file -- install it anyway? [y/N] ")
+        answer = input(f"  {second}{c('bold', 'N')} and resolve the file by hand.  [y/N] ")
     except (EOFError, KeyboardInterrupt):
         return False
     return answer.strip().lower() in ("y", "yes")
+
+
+def _excerpt(line: str, n: int) -> str:
+    """The first `n` characters of a line for a failure message, with the cut
+    MARKED. These strings are data (they travel in `failures` and print later,
+    indented, in red), so the budget is fixed rather than the terminal's --
+    but a silent cut is never right: the person reading `(first: '...')` must
+    be able to tell a short line from a shortened one."""
+    return line if len(line) <= n else line[:n - 3] + "..."
+
+
+def _side_name(side: str) -> str:
+    """'ours'/'theirs' as a person reads them. Same words as the no-base
+    prompt, so the prompt and the failure that follows it agree."""
+    return "your live file" if side == "ours" else "the payload's copy"
 
 
 def _dominant_eol(blob: bytes) -> bytes:
